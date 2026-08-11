@@ -247,7 +247,7 @@ function adicionarCarregandoImagem() {
     const div = document.getElementById("mensagens");
     const bolha = document.createElement("div");
     bolha.className = "msg jarvis";
-    bolha.innerHTML = '<div class="spinner"></div>';
+    bolha.innerHTML = '<div style="display:flex;align-items:center;gap:10px;"><div class="spinner"></div><span>Criando imagem...</span></div>';
     div.appendChild(bolha);
     div.scrollTop = div.scrollHeight;
     return bolha;
