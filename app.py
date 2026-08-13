@@ -1,21 +1,27 @@
 """
 Jarvis - Site Publico
-Chat + geracao de imagem, com cadastro de usuario e senha.
+Chat + geracao de imagem + conversor de imagem, com cadastro de usuario e senha.
 NAO tem nenhum comando de controle de PC.
 """
 
 import os
+import io
 import sqlite3
 import urllib.parse
 import random
 from datetime import datetime
-from flask import Flask, request, jsonify, session, redirect, url_for
+from flask import Flask, request, jsonify, session, redirect, url_for, send_file
 from werkzeug.security import generate_password_hash, check_password_hash
 
 try:
     from groq import Groq
 except ImportError:
     Groq = None
+
+try:
+    from PIL import Image
+except ImportError:
+    Image = None
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET", "troque_essa_chave_em_producao")
@@ -30,6 +36,7 @@ SISTEMA = (
 )
 
 CAMINHO_BD = os.environ.get("CAMINHO_BD", "jarvis.db")
+CONTA_DESENVOLVEDOR = "SAMUCA"
 
 
 def obter_bd():
@@ -73,7 +80,7 @@ PAGINA_LOGIN = """
 <style>
 * { box-sizing: border-box; }
 body { margin:0; font-family:'Segoe UI',Arial,sans-serif; background:#020a12; color:#e6f7ff; display:flex; align-items:center; justify-content:center; height:100vh; }
-.caixa { background:#03111c; padding:40px; border-radius:16px; border:1px solid #00c8ff44; text-align:center; width:320px; box-shadow:0 0 30px #00c8ff22; }
+.caixa { background:#03111c; padding:40px; border-radius:16px; border:1px solid #00c8ff44; text-align:center; width:320px; max-width:90vw; box-shadow:0 0 30px #00c8ff22; }
 .logo-img { width:70px; height:70px; border-radius:50%; margin-bottom:10px; box-shadow:0 0 16px #00c8ffaa; }
 h2 { margin:10px 0 20px; }
 input { width:100%; padding:12px; margin-top:10px; border-radius:8px; border:1px solid #00c8ff44; background:#020a12; color:#e6f7ff; }
@@ -118,22 +125,26 @@ PAGINA = """
 <title>Jarvis</title>
 <style>
 * { box-sizing: border-box; }
-body { margin:0; font-family: 'Segoe UI', Arial, sans-serif; background:#020a12; color:#e6f7ff; display:flex; height:100vh; }
+body { margin:0; font-family: 'Segoe UI', Arial, sans-serif; background:#020a12; color:#e6f7ff; display:flex; height:100vh; overflow:hidden; }
 
-.sidebar { width:260px; background:#03111c; border-right:1px solid #0a2a3a; padding:16px; display:flex; flex-direction:column; }
+.sidebar { width:260px; background:#03111c; border-right:1px solid #0a2a3a; padding:16px; display:flex; flex-direction:column; transition: margin-left 0.2s ease; flex-shrink:0; }
+.sidebar.recolhida { margin-left:-260px; }
 .logo-linha { display:flex; align-items:center; gap:10px; margin-bottom:20px; }
-.menu-icone { display:flex; flex-direction:column; gap:4px; cursor:pointer; }
+.menu-icone { display:flex; flex-direction:column; gap:4px; cursor:pointer; padding:6px; }
 .menu-icone span { width:20px; height:2px; background:#00c8ff; display:block; }
 .logo-img { width:36px; height:36px; border-radius:50%; object-fit:cover; box-shadow:0 0 12px #00c8ffaa; }
 .novo-chat { background:#0a2a3a; color:#8fe8ff; border:1px solid #00c8ff44; border-radius:8px; padding:10px; text-align:left; cursor:pointer; margin-bottom:16px; }
 .historico-lista { flex:1; overflow-y:auto; font-size:13px; }
 .item-hist { padding:8px; border-radius:6px; margin-bottom:4px; cursor:pointer; color:#8fe8ff; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.item-hist:hover { background:#0a2a3a; }
-.rodape-sidebar { font-size:12px; color:#4fb8d8; display:flex; justify-content:space-between; align-items:center; margin-top:10px; }
+.item-hist:hover, .item-hist.ativo { background:#0a2a3a; }
+.rodape-sidebar { font-size:12px; color:#4fb8d8; display:flex; justify-content:space-between; align-items:center; margin-top:10px; gap:6px; }
 .sair { cursor:pointer; text-decoration:underline; }
+.selo-dev { background:#00c8ff; color:#001824; font-size:10px; padding:2px 6px; border-radius:8px; font-weight:bold; }
 
-.principal { flex:1; display:flex; flex-direction:column; }
-.topo { padding:16px; border-bottom:1px solid #0a2a3a; font-weight:bold; letter-spacing:1px; display:flex; align-items:center; justify-content:space-between; }
+.principal { flex:1; display:flex; flex-direction:column; min-width:0; }
+.topo { padding:16px; border-bottom:1px solid #0a2a3a; font-weight:bold; letter-spacing:1px; display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; }
+.topo-esquerda { display:flex; align-items:center; gap:10px; }
+.menu-icone-mobile { display:none; }
 .seletor-voz { background:#03111c; color:#8fe8ff; border:1px solid #00c8ff44; border-radius:6px; padding:6px; font-size:12px; }
 .mensagens { flex:1; overflow-y:auto; padding:20px; display:flex; flex-direction:column; gap:16px; }
 .msg { max-width:70%; padding:12px 16px; border-radius:12px; line-height:1.4; }
@@ -142,7 +153,7 @@ body { margin:0; font-family: 'Segoe UI', Arial, sans-serif; background:#020a12;
 .msg img { max-width:100%; border-radius:8px; margin-top:8px; }
 .botao-falar-msg { background:none; border:none; color:#00c8ff; cursor:pointer; font-size:14px; margin-top:6px; }
 
-.spinner { width:28px; height:28px; border-radius:50%; border:3px solid #0a2a3a; border-top-color:#00c8ff; animation: girar 0.8s linear infinite; }
+.spinner { width:24px; height:24px; border-radius:50%; border:3px solid #0a2a3a; border-top-color:#00c8ff; animation: girar 0.8s linear infinite; flex-shrink:0; }
 @keyframes girar { to { transform: rotate(360deg); } }
 .pontos-carregando { display:flex; gap:4px; padding:4px 0; }
 .pontos-carregando span { width:6px; height:6px; border-radius:50%; background:#00c8ff; animation: pulsar 1s infinite ease-in-out; }
@@ -150,47 +161,91 @@ body { margin:0; font-family: 'Segoe UI', Arial, sans-serif; background:#020a12;
 .pontos-carregando span:nth-child(3) { animation-delay: 0.3s; }
 @keyframes pulsar { 0%, 80%, 100% { opacity:0.2; transform:scale(0.8);} 40% { opacity:1; transform:scale(1.2);} }
 
-.area-input { padding:16px; border-top:1px solid #0a2a3a; display:flex; gap:10px; align-items:center; }
-.area-input input { flex:1; padding:14px; border-radius:8px; border:1px solid #00c8ff44; background:#03111c; color:#e6f7ff; font-size:14px; }
-.area-input button { padding:14px 18px; border-radius:8px; border:none; background:#00c8ff; color:#001824; font-weight:bold; cursor:pointer; }
-.area-input button.imagem { background:#0a2a3a; color:#8fe8ff; border:1px solid #00c8ff44; }
+.area-input { padding:16px; border-top:1px solid #0a2a3a; display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+.area-input input[type=text] { flex:1; min-width:120px; padding:14px; border-radius:8px; border:1px solid #00c8ff44; background:#03111c; color:#e6f7ff; font-size:14px; }
+.area-input button { padding:14px 16px; border-radius:8px; border:none; background:#00c8ff; color:#001824; font-weight:bold; cursor:pointer; font-size:13px; }
+.area-input button.imagem, .area-input button.converter { background:#0a2a3a; color:#8fe8ff; border:1px solid #00c8ff44; }
 .botao-mic { background:#0a2a3a !important; color:#8fe8ff !important; border:1px solid #00c8ff44 !important; padding:12px 14px !important; display:flex; align-items:center; }
 .botao-mic.gravando { background:#ff3b3b !important; color:#fff !important; }
+
+.modal-fundo { display:none; position:fixed; inset:0; background:#000a; align-items:center; justify-content:center; z-index:10; }
+.modal-fundo.aberto { display:flex; }
+.modal-caixa { background:#03111c; border:1px solid #00c8ff44; border-radius:12px; padding:24px; width:320px; max-width:90vw; }
+.modal-caixa h3 { margin-top:0; }
+.modal-caixa input, .modal-caixa select { width:100%; padding:10px; margin-top:8px; border-radius:6px; border:1px solid #00c8ff44; background:#020a12; color:#e6f7ff; }
+.modal-botoes { display:flex; gap:8px; margin-top:16px; }
+.modal-botoes button { flex:1; padding:10px; border-radius:6px; border:none; cursor:pointer; font-weight:bold; }
+.modal-botoes .confirmar { background:#00c8ff; color:#001824; }
+.modal-botoes .cancelar { background:#0a2a3a; color:#8fe8ff; }
+
+@media (max-width: 720px) {
+  .sidebar { position:fixed; z-index:20; height:100vh; }
+  .sidebar:not(.recolhida) { margin-left:0; }
+  .sidebar.recolhida { margin-left:-260px; }
+  .msg { max-width:88%; }
+  .area-input button { padding:12px; font-size:12px; }
+}
 </style>
 </head>
 <body>
 
-<div class="sidebar">
+<div class="sidebar" id="sidebar">
   <div class="logo-linha">
-    <div class="menu-icone"><span></span><span></span><span></span></div>
+    <div class="menu-icone" onclick="alternarSidebar()"><span></span><span></span><span></span></div>
     <img src="/static/logo.jpg" class="logo-img" onerror="this.style.display='none'">
     <strong>Jarvis</strong>
   </div>
   <button class="novo-chat" onclick="novaConversa()">+ Nova conversa</button>
   <div class="historico-lista" id="listaConversas"></div>
   <div class="rodape-sidebar">
-    <span>{usuario}</span>
+    <span>{usuario} {selo_dev}</span>
     <span class="sair" onclick="location.href='/logout'">Sair</span>
   </div>
 </div>
 
 <div class="principal">
   <div class="topo">
-    <span>JARVIS</span>
+    <div class="topo-esquerda">
+      <div class="menu-icone menu-icone-mobile" onclick="alternarSidebar()"><span></span><span></span><span></span></div>
+      <span>JARVIS</span>
+    </div>
     <select class="seletor-voz" id="seletorVoz"></select>
   </div>
   <div class="mensagens" id="mensagens"></div>
   <div class="area-input">
     <button class="botao-mic" id="botaoMic" onclick="alternarMicrofone()">""" + ICONE_MIC_LIGADO + """</button>
-    <input type="text" id="campo" placeholder="Pergunte qualquer coisa..." autocomplete="off">
+    <input type="text" id="campo" placeholder="Pergunte qualquer coisa...">
     <button class="imagem" onclick="gerarImagem()">Gerar imagem</button>
+    <button class="converter" onclick="abrirModalConverter()">Converter imagem</button>
     <button onclick="enviarTexto()">Enviar</button>
+  </div>
+</div>
+
+<div class="modal-fundo" id="modalConverter">
+  <div class="modal-caixa">
+    <h3>Converter / redimensionar imagem</h3>
+    <input type="file" id="arquivoImagem" accept="image/*">
+    <input type="number" id="larguraNova" placeholder="Largura (px)">
+    <input type="number" id="alturaNova" placeholder="Altura (px)">
+    <select id="formatoNovo">
+      <option value="png">PNG</option>
+      <option value="gif">GIF</option>
+      <option value="jpeg">JPEG</option>
+    </select>
+    <div class="modal-botoes">
+      <button class="cancelar" onclick="fecharModalConverter()">Cancelar</button>
+      <button class="confirmar" onclick="converterImagem()">Converter</button>
+    </div>
   </div>
 </div>
 
 <script>
 const ICONE_LIGADO = `""" + ICONE_MIC_LIGADO + """`;
 const ICONE_DESLIGADO = `""" + ICONE_MIC_DESLIGADO + """`;
+
+function alternarSidebar() {
+    document.getElementById("sidebar").classList.toggle("recolhida");
+}
 
 let vozes = [];
 function carregarVozes() {
@@ -216,7 +271,52 @@ function falarTexto(texto) {
     speechSynthesis.speak(utter);
 }
 
-function adicionarMensagem(remetente, conteudoHtml, comAudio) {
+let conversas = JSON.parse(localStorage.getItem("jarvis_conversas_completas") || "[]");
+let indiceAtual = -1;
+
+function salvarConversas() {
+    localStorage.setItem("jarvis_conversas_completas", JSON.stringify(conversas));
+}
+
+function renderizarSidebar() {
+    const container = document.getElementById("listaConversas");
+    container.innerHTML = "";
+    conversas.forEach((c, i) => {
+        const item = document.createElement("div");
+        item.className = "item-hist" + (i === indiceAtual ? " ativo" : "");
+        const titulo = c.titulo || "Conversa";
+        item.textContent = titulo.length > 10 ? titulo.slice(0, 10) + "..." : titulo;
+        item.onclick = () => abrirConversa(i);
+        container.appendChild(item);
+    });
+}
+
+function renderizarMensagens() {
+    const div = document.getElementById("mensagens");
+    div.innerHTML = "";
+    if (indiceAtual === -1) return;
+    conversas[indiceAtual].mensagens.forEach(m => {
+        adicionarMensagemDOM(m.remetente, m.html, m.audio);
+    });
+    div.scrollTop = div.scrollHeight;
+}
+
+function abrirConversa(indice) {
+    indiceAtual = indice;
+    renderizarSidebar();
+    renderizarMensagens();
+    if (window.innerWidth <= 720) document.getElementById("sidebar").classList.add("recolhida");
+}
+
+function novaConversa() {
+    conversas.unshift({titulo: "", mensagens: []});
+    indiceAtual = 0;
+    salvarConversas();
+    renderizarSidebar();
+    renderizarMensagens();
+}
+
+function adicionarMensagemDOM(remetente, conteudoHtml, comAudio) {
     const div = document.getElementById("mensagens");
     const bolha = document.createElement("div");
     bolha.className = "msg " + remetente;
@@ -230,6 +330,19 @@ function adicionarMensagem(remetente, conteudoHtml, comAudio) {
     }
     div.appendChild(bolha);
     div.scrollTop = div.scrollHeight;
+    return bolha;
+}
+
+function adicionarMensagem(remetente, conteudoHtml, comAudio) {
+    if (indiceAtual === -1) novaConversa();
+    const bolha = adicionarMensagemDOM(remetente, conteudoHtml, comAudio);
+    conversas[indiceAtual].mensagens.push({remetente, html: conteudoHtml, audio: comAudio || null});
+    if (!conversas[indiceAtual].titulo) {
+        const textoSimples = bolha.textContent.trim();
+        conversas[indiceAtual].titulo = textoSimples;
+        renderizarSidebar();
+    }
+    salvarConversas();
     return bolha;
 }
 
@@ -253,36 +366,10 @@ function adicionarCarregandoImagem() {
     return bolha;
 }
 
-function atualizarListaConversas() {
-    const lista = JSON.parse(localStorage.getItem("jarvis_conversas") || "[]");
-    const container = document.getElementById("listaConversas");
-    container.innerHTML = "";
-    lista.forEach(titulo => {
-        const item = document.createElement("div");
-        item.className = "item-hist";
-        item.textContent = titulo.length > 10 ? titulo.slice(0, 10) + "..." : titulo;
-        container.appendChild(item);
-    });
-}
-
-function registrarTituloConversa(primeiroTexto) {
-    const lista = JSON.parse(localStorage.getItem("jarvis_conversas") || "[]");
-    lista.unshift(primeiroTexto);
-    localStorage.setItem("jarvis_conversas", JSON.stringify(lista.slice(0, 20)));
-    atualizarListaConversas();
-}
-
-function novaConversa() {
-    document.getElementById("mensagens").innerHTML = "";
-}
-
-let primeiraMensagem = true;
-
 async function enviarTexto() {
     const campo = document.getElementById("campo");
     const texto = campo.value.trim();
     if (!texto) return;
-    if (primeiraMensagem) { registrarTituloConversa(texto); primeiraMensagem = false; }
     adicionarMensagem("usuario", texto);
     campo.value = "";
 
@@ -300,7 +387,6 @@ async function gerarImagem() {
     const campo = document.getElementById("campo");
     const prompt = campo.value.trim();
     if (!prompt) return;
-    if (primeiraMensagem) { registrarTituloConversa(prompt); primeiraMensagem = false; }
     adicionarMensagem("usuario", "Gerar imagem: " + prompt);
     campo.value = "";
 
@@ -318,6 +404,37 @@ async function gerarImagem() {
 document.getElementById("campo").addEventListener("keydown", function(e) {
     if (e.key === "Enter") enviarTexto();
 });
+
+function abrirModalConverter() { document.getElementById("modalConverter").classList.add("aberto"); }
+function fecharModalConverter() { document.getElementById("modalConverter").classList.remove("aberto"); }
+
+async function converterImagem() {
+    const arquivo = document.getElementById("arquivoImagem").files[0];
+    if (!arquivo) { alert("Escolha um arquivo primeiro."); return; }
+    const largura = document.getElementById("larguraNova").value;
+    const altura = document.getElementById("alturaNova").value;
+    const formato = document.getElementById("formatoNovo").value;
+
+    const dadosForm = new FormData();
+    dadosForm.append("arquivo", arquivo);
+    dadosForm.append("largura", largura);
+    dadosForm.append("altura", altura);
+    dadosForm.append("formato", formato);
+
+    fecharModalConverter();
+    adicionarMensagem("usuario", "Converter imagem: " + arquivo.name);
+    const carregando = adicionarCarregandoImagem();
+
+    const resposta = await fetch("/converter", { method: "POST", body: dadosForm });
+    carregando.remove();
+    if (!resposta.ok) {
+        adicionarMensagem("jarvis", "Nao consegui converter essa imagem.");
+        return;
+    }
+    const blob = await resposta.blob();
+    const url = URL.createObjectURL(blob);
+    adicionarMensagem("jarvis", "Pronto:<br><img src='" + url + "'><br><a href='" + url + "' download='convertida." + formato + "' style='color:#00c8ff;'>Baixar</a>");
+}
 
 let reconhecimento = null;
 let gravando = false;
@@ -342,7 +459,9 @@ function alternarMicrofone() {
     reconhecimento.start();
 }
 
-atualizarListaConversas();
+if (conversas.length > 0) { indiceAtual = 0; }
+renderizarSidebar();
+renderizarMensagens();
 </script>
 </body>
 </html>
@@ -391,7 +510,9 @@ def login():
 def painel():
     if not session.get("usuario"):
         return redirect(url_for("login"))
-    return PAGINA.replace("{usuario}", session["usuario"])
+    usuario = session["usuario"]
+    selo = '<span class="selo-dev">DEV</span>' if usuario.upper() == CONTA_DESENVOLVEDOR else ""
+    return PAGINA.replace("{usuario}", usuario).replace("{selo_dev}", selo)
 
 
 @app.route("/logout")
@@ -460,6 +581,42 @@ def imagem():
         + f"?model=flux&width=1024&height=1024&seed={seed}&nologo=true"
     )
     return jsonify({"url": url})
+
+
+@app.route("/converter", methods=["POST"])
+def converter():
+    if not session.get("usuario"):
+        return "Nao autorizado", 401
+    if not Image:
+        return "Biblioteca de imagem nao disponivel no servidor.", 500
+
+    arquivo = request.files.get("arquivo")
+    if not arquivo:
+        return "Nenhum arquivo enviado.", 400
+
+    formato = request.form.get("formato", "png").lower()
+    largura = request.form.get("largura", "").strip()
+    altura = request.form.get("altura", "").strip()
+
+    try:
+        img = Image.open(arquivo.stream)
+        if formato in ("jpeg", "jpg"):
+            img = img.convert("RGB")
+        else:
+            img = img.convert("RGBA")
+
+        if largura and altura:
+            img = img.resize((int(largura), int(altura)))
+
+        saida = io.BytesIO()
+        formato_pil = "JPEG" if formato in ("jpeg", "jpg") else formato.upper()
+        img.save(saida, format=formato_pil)
+        saida.seek(0)
+
+        tipo_mime = {"png": "image/png", "gif": "image/gif", "jpeg": "image/jpeg", "jpg": "image/jpeg"}.get(formato, "image/png")
+        return send_file(saida, mimetype=tipo_mime)
+    except Exception as erro:
+        return f"Erro ao converter: {erro}", 500
 
 
 if __name__ == "__main__":
