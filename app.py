@@ -185,6 +185,18 @@ def buscar_usuario(nome):
     return linha
 
 
+def eh_desenvolvedor(nome_usuario):
+    """Verifica se quem esta logado e o dono do site. Antes so funcionava se o
+    apelido fosse exatamente 'SAMUCA'; agora tambem reconhece pelo EMAIL_DONO,
+    entao a conta continua sendo dev mesmo com outro apelido."""
+    if not nome_usuario:
+        return False
+    if nome_usuario.upper() == CONTA_DESENVOLVEDOR:
+        return True
+    linha = buscar_usuario(nome_usuario)
+    return bool(linha and linha["email"] and linha["email"].strip().lower() == EMAIL_DONO.lower())
+
+
 def salvar_arquivo_enviado(arquivo):
     """Fallback local: usado apenas se o ImgBB nao estiver configurado ou falhar."""
     if not arquivo or not arquivo.filename:
@@ -228,8 +240,12 @@ def enviar_email_codigo(email, codigo):
     assunto = "Seu codigo de acesso - Jarvis"
     corpo = f"Seu codigo de verificacao e: {codigo}\n\nEle expira em {MINUTOS_VALIDADE_CODIGO} minutos.\nSe voce nao pediu esse codigo, ignore este email."
     if not (SMTP_HOST and SMTP_USUARIO and SMTP_SENHA):
+        # SMTP nao configurado no servidor (variaveis de ambiente ausentes no Render).
+        # Antes isso fingia sucesso e deixava a pessoa travada, porque o codigo so
+        # aparecia no log do servidor, que ninguem alem do dono consegue ver.
+        # Agora avisamos a rota chamadora para que o codigo seja mostrado na tela.
         print(f"[JARVIS] (SMTP nao configurado) codigo para {email}: {codigo}")
-        return True
+        return "sem_smtp"
     try:
         mensagem = MIMEText(corpo)
         mensagem["Subject"] = assunto
@@ -437,8 +453,13 @@ async function enviarCodigo(reenvio) {
         });
         const dados = await r.json();
         if (dados.ok) {
-            document.getElementById("textoCodigoEnviado").textContent = "Enviamos um codigo para " + emailAtual;
-            document.getElementById("campoCodigo").value = "";
+            if (dados.codigo_teste) {
+                document.getElementById("textoCodigoEnviado").textContent = "Envio de email nao esta configurado no servidor. Codigo de teste: " + dados.codigo_teste;
+                document.getElementById("campoCodigo").value = dados.codigo_teste;
+            } else {
+                document.getElementById("textoCodigoEnviado").textContent = "Enviamos um codigo para " + emailAtual;
+                document.getElementById("campoCodigo").value = "";
+            }
             irPara("etapaCodigo");
         } else {
             mostrarErro(dados.erro || "Nao foi possivel enviar o codigo.");
@@ -1032,6 +1053,7 @@ body { height:100vh; overflow-y:auto; }
   <div class="caixa-postar">
     <textarea id="textoPost" placeholder="No que voce esta pensando?"></textarea>
     <input type="file" id="imagemPost" accept="image/*">
+    <input type="text" id="linkImagemPost" placeholder="Link de imagem (opcional, se nao for enviar arquivo)">
     <input type="text" id="videoPost" placeholder="Link de video (Discord ou outro, opcional)">
     <br><button onclick="publicar()">Postar</button>
   </div>
@@ -1086,25 +1108,29 @@ async function publicar() {
     const botao = document.querySelector(".caixa-postar button");
     const texto = document.getElementById("textoPost").value.trim();
     const arquivo = document.getElementById("imagemPost").files[0];
+    const linkImagem = document.getElementById("linkImagemPost").value.trim();
     const video = document.getElementById("videoPost").value.trim();
-    if (!texto && !arquivo && !video) {
-        alert("Escreva algo, escolha uma foto ou cole um link de video antes de postar.");
+    if (!texto && !arquivo && !linkImagem && !video) {
+        alert("Escreva algo, escolha uma foto ou cole um link antes de postar.");
         return;
     }
     const form = new FormData();
     form.append("texto", texto);
     if (arquivo) form.append("imagem", arquivo);
+    if (linkImagem) form.append("imagem_link", linkImagem);
     if (video) form.append("video", video);
     botao.disabled = true;
     botao.textContent = "Postando...";
     try {
         const resposta = await fetch("/rede/postar", { method: "POST", body: form });
         if (!resposta.ok) {
-            alert("Nao consegui postar. Sua sessao pode ter expirado - tenta sair e logar de novo.");
+            const dados = await resposta.json().catch(() => ({}));
+            alert(dados.erro || "Nao consegui postar. Sua sessao pode ter expirado - tenta sair e logar de novo.");
             return;
         }
         document.getElementById("textoPost").value = "";
         document.getElementById("imagemPost").value = "";
+        document.getElementById("linkImagemPost").value = "";
         document.getElementById("videoPost").value = "";
         carregarFeed();
     } catch (erro) {
@@ -1412,10 +1438,15 @@ def auth_enviar_codigo():
     )
     conexao.commit()
     conexao.close()
-    enviado = enviar_email_codigo(email, codigo)
-    if not enviado:
+    resultado = enviar_email_codigo(email, codigo)
+    if resultado is False:
         return jsonify({"ok": False, "erro": "Nao foi possivel enviar o codigo. Tente novamente."})
-    return jsonify({"ok": True})
+    resposta = {"ok": True}
+    if resultado == "sem_smtp":
+        # Servidor sem SMTP configurado: manda o codigo junto da resposta para
+        # a pessoa nao ficar travada na tela de login.
+        resposta["codigo_teste"] = codigo
+    return jsonify(resposta)
 
 
 @app.route("/auth/verificar_codigo", methods=["POST"])
@@ -1628,7 +1659,7 @@ def rede():
     if not session.get("usuario"):
         return redirect(url_for("login"))
     usuario = session["usuario"]
-    eh_dev = usuario.upper() == CONTA_DESENVOLVEDOR
+    eh_dev = eh_desenvolvedor(usuario)
     painel_admin_html = ""
     if eh_dev:
         painel_admin_html = """
@@ -1774,7 +1805,14 @@ def rede_postar():
     usuario = session["usuario"]
     texto = request.form.get("texto", "").strip()
     video = request.form.get("video", "").strip()
+    imagem_link = request.form.get("imagem_link", "").strip()
     caminho_imagem = salvar_imagem(request.files.get("imagem"))
+    if not caminho_imagem and imagem_link:
+        if not (imagem_link.startswith("http://") or imagem_link.startswith("https://")):
+            return jsonify({"ok": False, "erro": "O link de imagem precisa comecar com http:// ou https://"}), 400
+        caminho_imagem = imagem_link
+    if not texto and not caminho_imagem and not video:
+        return jsonify({"ok": False, "erro": "Escreva algo, escolha uma foto ou cole um link antes de postar."}), 400
     conexao = obter_bd()
     conexao.execute("INSERT INTO posts (usuario, texto, imagem, video, criado_em) VALUES (?, ?, ?, ?, ?)", (usuario, texto, caminho_imagem, video or None, datetime.now().isoformat()))
     conexao.commit()
@@ -1864,7 +1902,7 @@ def rede_seguir():
 
 @app.route("/rede/verificar", methods=["POST"])
 def rede_verificar():
-    if not session.get("usuario") or session["usuario"].upper() != CONTA_DESENVOLVEDOR:
+    if not eh_desenvolvedor(session.get("usuario")):
         return jsonify({"ok": False, "erro": "Sem permissao."}), 403
     dados = request.get_json()
     alvo = dados.get("alvo", "").strip()
@@ -1884,7 +1922,7 @@ def rede_verificar():
 
 @app.route("/rede/criar_tag", methods=["POST"])
 def rede_criar_tag():
-    if not session.get("usuario") or session["usuario"].upper() != CONTA_DESENVOLVEDOR:
+    if not eh_desenvolvedor(session.get("usuario")):
         return jsonify({"ok": False, "erro": "Sem permissao."}), 403
     nome = request.form.get("nome", "").strip()
     cor = request.form.get("cor", "#ffffff").strip()
@@ -1906,7 +1944,7 @@ def rede_criar_tag():
 
 @app.route("/rede/atribuir_tag", methods=["POST"])
 def rede_atribuir_tag():
-    if not session.get("usuario") or session["usuario"].upper() != CONTA_DESENVOLVEDOR:
+    if not eh_desenvolvedor(session.get("usuario")):
         return jsonify({"ok": False, "erro": "Sem permissao."}), 403
     dados = request.get_json()
     alvo = dados.get("alvo", "").strip()
@@ -1932,7 +1970,7 @@ def suporte():
     usuario = session["usuario"]
     conexao = obter_bd()
     eh_agente = conexao.execute("SELECT 1 FROM agentes_suporte WHERE usuario = ? COLLATE NOCASE", (usuario,)).fetchone() is not None
-    eh_dev = usuario.upper() == CONTA_DESENVOLVEDOR
+    eh_dev = eh_desenvolvedor(usuario)
     conexao.close()
     painel_admin_html = ""
     if eh_dev:
@@ -1950,7 +1988,7 @@ def suporte():
 
 @app.route("/suporte/agente", methods=["POST"])
 def suporte_agente():
-    if not session.get("usuario") or session["usuario"].upper() != CONTA_DESENVOLVEDOR:
+    if not eh_desenvolvedor(session.get("usuario")):
         return jsonify({"ok": False, "erro": "Sem permissao."}), 403
     dados = request.get_json()
     alvo = dados.get("usuario", "").strip()
