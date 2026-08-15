@@ -37,6 +37,15 @@ try:
 except ImportError:
     requests = None
 
+try:
+    import base64 as _b64
+    from cryptography.fernet import Fernet, InvalidToken
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+except ImportError:
+    Fernet = None
+    InvalidToken = Exception
+
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET", "troque_essa_chave_em_producao")
 
@@ -58,6 +67,13 @@ os.makedirs(PASTA_UPLOADS, exist_ok=True)
 
 # ---------- Dono do site (fica sempre com o ID permanente 1) ----------
 EMAIL_DONO = "samuelgomeswx2000@gmail.com"
+
+# ---------- Fundo da tela inicial ----------
+# Atencao: links do CDN do Discord (cdn.discordapp.com/attachments/...) expiram
+# depois de um tempo (veja os parametros ?ex=...&is=...&hm=... na URL). Quando
+# esse link parar de funcionar, e so trocar o valor abaixo por outro link de
+# imagem publica (ou subir a imagem para /static e usar "/static/fundo.jpg").
+FUNDO_INICIO_URL = "https://cdn.discordapp.com/attachments/1527396622336524359/1538287118911021250/1f38792ffa63762e59c32946e314626e.jpg?ex=6a822105&is=6a80cf85&hm=ac3dc688febe05554a4409abeffc4e5c54b9cbf3427d3ac5ce77f8298bf80cb5&"
 
 # ---------- ImgBB (hospedagem de imagens de perfil/posts) ----------
 IMGBB_API_KEY = os.environ.get("IMGBB_API_KEY", "")
@@ -91,6 +107,8 @@ def iniciar_bd():
         ("verificado", "INTEGER DEFAULT 0"), ("foto_perfil", "TEXT"), ("banner", "TEXT"),
         ("bio", "TEXT"), ("email", "TEXT"), ("tag", "TEXT"),
         ("id_publico", "INTEGER"), ("data_nascimento", "TEXT"),
+        ("ultima_atividade", "TEXT"), ("bloqueado", "INTEGER DEFAULT 0"),
+        ("avisos_moderacao", "INTEGER DEFAULT 0"),
     ]:
         try:
             conexao.execute(f"ALTER TABLE usuarios ADD COLUMN {coluna} {tipo}")
@@ -134,6 +152,27 @@ def iniciar_bd():
             nome TEXT PRIMARY KEY, cor TEXT NOT NULL, foto TEXT
         )
     """)
+    # ---------- JarvisZap ----------
+    conexao.execute("""
+        CREATE TABLE IF NOT EXISTS zap_contatos (
+            usuario TEXT NOT NULL, contato TEXT NOT NULL, criado_em TEXT NOT NULL,
+            PRIMARY KEY (usuario, contato)
+        )
+    """)
+    conexao.execute("""
+        CREATE TABLE IF NOT EXISTS zap_mensagens (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, conversa TEXT NOT NULL,
+            remetente TEXT NOT NULL, destinatario TEXT NOT NULL,
+            tipo TEXT NOT NULL DEFAULT 'texto', conteudo TEXT NOT NULL,
+            criptografado INTEGER DEFAULT 0, criado_em TEXT NOT NULL
+        )
+    """)
+    conexao.execute("""
+        CREATE TABLE IF NOT EXISTS zap_conversas (
+            conversa TEXT PRIMARY KEY, frase_cripto TEXT, ativada_por TEXT, criado_em TEXT
+        )
+    """)
+    conexao.execute("CREATE TABLE IF NOT EXISTS zap_denuncias (id INTEGER PRIMARY KEY AUTOINCREMENT, mensagem_id INTEGER NOT NULL, denunciante TEXT NOT NULL, criado_em TEXT NOT NULL)")
     conexao.execute("CREATE TABLE IF NOT EXISTS agentes_suporte (usuario TEXT PRIMARY KEY)")
     conexao.execute("""
         CREATE TABLE IF NOT EXISTS tickets_suporte (
@@ -286,6 +325,119 @@ def html_tag(nome_tag):
         return ""
     foto_html = f'<img src="{linha["foto"]}">' if linha["foto"] else ""
     return f'<span class="tag-badge" style="background:{linha["cor"]}">{foto_html}{nome_tag}</span>'
+
+
+# ================= JarvisZap: presenca online, criptografia e moderacao =================
+
+MINUTOS_CONSIDERADO_ONLINE = 3
+
+
+def marcar_atividade(usuario):
+    """Atualiza o horario da ultima atividade do usuario (usado para contar quem esta online)."""
+    if not usuario:
+        return
+    conexao = obter_bd()
+    conexao.execute("UPDATE usuarios SET ultima_atividade = ? WHERE usuario = ? COLLATE NOCASE", (datetime.now().isoformat(), usuario))
+    conexao.commit()
+    conexao.close()
+
+
+def contar_online():
+    limite = (datetime.now() - timedelta(minutes=MINUTOS_CONSIDERADO_ONLINE)).isoformat()
+    conexao = obter_bd()
+    linha = conexao.execute("SELECT COUNT(*) AS n FROM usuarios WHERE ultima_atividade IS NOT NULL AND ultima_atividade >= ?", (limite,)).fetchone()
+    conexao.close()
+    return linha["n"] if linha else 0
+
+
+def contar_contas():
+    conexao = obter_bd()
+    linha = conexao.execute("SELECT COUNT(*) AS n FROM usuarios").fetchone()
+    conexao.close()
+    return linha["n"] if linha else 0
+
+
+def id_conversa(usuario_a, usuario_b):
+    """Identificador estavel (e igual dos dois lados) de uma conversa do JarvisZap entre duas contas."""
+    return "|".join(sorted([usuario_a.lower(), usuario_b.lower()]))
+
+
+def buscar_usuario_por_id_publico(id_publico):
+    conexao = obter_bd()
+    linha = conexao.execute("SELECT * FROM usuarios WHERE id_publico = ?", (id_publico,)).fetchone()
+    conexao.close()
+    return linha
+
+
+def salvar_midia_zap(arquivo):
+    """Envia imagens para o ImgBB; audios e videos ficam salvos localmente (o ImgBB so aceita imagem)."""
+    if not arquivo or not arquivo.filename:
+        return None
+    tipo = (arquivo.mimetype or "").lower()
+    if tipo.startswith("image/"):
+        return salvar_imagem(arquivo)
+    return salvar_arquivo_enviado(arquivo)
+
+
+def chave_a_partir_da_frase(frase):
+    """Deriva uma chave Fernet (AES) a partir de uma frase/data escolhida pela pessoa,
+    por exemplo 'criptografia de 15/08/2000'. A mesma frase sempre gera a mesma chave."""
+    if not Fernet:
+        return None
+    sal = b"jarviszap-sal-fixo"
+    kdf = PBKDF2HMAC(algorithm=hashes.SHA256(), length=32, salt=sal, iterations=390000)
+    chave = _b64.urlsafe_b64encode(kdf.derive(frase.strip().lower().encode("utf-8")))
+    return chave
+
+
+def criptografar_texto(texto, frase):
+    if not Fernet or not frase:
+        return texto, False
+    try:
+        f = Fernet(chave_a_partir_da_frase(frase))
+        return f.encrypt(texto.encode("utf-8")).decode("utf-8"), True
+    except Exception:
+        return texto, False
+
+
+def descriptografar_texto(texto_cifrado, frase):
+    if not Fernet or not frase:
+        return None
+    try:
+        f = Fernet(chave_a_partir_da_frase(frase))
+        return f.decrypt(texto_cifrado.encode("utf-8")).decode("utf-8")
+    except (InvalidToken, Exception):
+        return None
+
+
+# Lista de termos usada pelo bot do Jarvis para barrar mensagens de texto com
+# conteudo adulto/sexual explicito ou de terror/ameaca grave. E uma checagem
+# simples por palavra-chave (nao substitui moderacao humana nem analisa fotos/
+# audios/videos, que exigiriam um servico externo de analise de midia).
+TERMOS_PROIBIDOS = [
+    "pornografia", "porno", "nudes", "sexo explicito", "conteudo adulto",
+    "estupro", "pedofilia", "suicidio assistido", "como matar", "como se matar",
+]
+
+
+def mensagem_contem_conteudo_proibido(texto):
+    texto_normalizado = (texto or "").lower()
+    return any(termo in texto_normalizado for termo in TERMOS_PROIBIDOS)
+
+
+def aplicar_moderacao(usuario):
+    """Registra um aviso de moderacao para a conta e bloqueia apos repetidas violacoes."""
+    conexao = obter_bd()
+    conexao.execute("UPDATE usuarios SET avisos_moderacao = COALESCE(avisos_moderacao, 0) + 1 WHERE usuario = ? COLLATE NOCASE", (usuario,))
+    linha = conexao.execute("SELECT avisos_moderacao FROM usuarios WHERE usuario = ? COLLATE NOCASE", (usuario,)).fetchone()
+    avisos = linha["avisos_moderacao"] if linha else 1
+    bloqueado = False
+    if avisos >= 3:
+        conexao.execute("UPDATE usuarios SET bloqueado = 1 WHERE usuario = ? COLLATE NOCASE", (usuario,))
+        bloqueado = True
+    conexao.commit()
+    conexao.close()
+    return avisos, bloqueado
 
 
 ICONE_MIC = """<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M12 14a3 3 0 003-3V6a3 3 0 00-6 0v5a3 3 0 003 3zm5-3a5 5 0 01-10 0H5a7 7 0 006 6.92V21h2v-3.08A7 7 0 0019 11h-2z"/></svg>"""
@@ -545,25 +697,38 @@ PAGINA_INICIO = """
 <title>Jarvis</title>
 <style>
 """ + ESTILO_COMUM + """
-body { height:100vh; display:flex; flex-direction:column; }
-.status-topo { text-align:center; padding:30px 0 10px; }
+body {
+  height:100vh; display:flex; flex-direction:column;
+  background-image: linear-gradient(180deg, #000000cc, #000000ee), url('{fundo_url}');
+  background-size: cover; background-position: center; background-attachment: fixed;
+}
+.status-topo { text-align:center; padding:30px 0 6px; }
 .relogio { font-size:44px; font-weight:200; letter-spacing:2px; }
 .data { font-size:13px; color:#888; margin-top:4px; }
-.apps { flex:1; display:flex; align-items:center; justify-content:center; gap:36px; flex-wrap:wrap; padding:20px; }
+.contadores { display:flex; align-items:center; justify-content:center; gap:18px; margin-top:12px; font-size:12px; color:#ccc; }
+.contador-item { display:flex; align-items:center; gap:6px; background:#0d0d0dcc; border:1px solid #ffffff22; padding:6px 12px; border-radius:20px; }
+.pontinho-online { width:8px; height:8px; border-radius:50%; background:#3ddc6a; box-shadow:0 0 6px #3ddc6a; }
+.apps { flex:1; display:flex; align-items:center; justify-content:center; gap:30px; flex-wrap:wrap; padding:20px; }
 .app-icone { display:flex; flex-direction:column; align-items:center; gap:10px; cursor:pointer; text-decoration:none; color:#f2f2f2; }
-.icone-quadrado { width:64px; height:64px; border-radius:18px; background:#0d0d0d; border:1px solid #ffffff22; display:flex; align-items:center; justify-content:center; font-size:26px; }
+.icone-quadrado { width:64px; height:64px; border-radius:18px; background:#0d0d0dcc; border:1px solid #ffffff22; display:flex; align-items:center; justify-content:center; font-size:26px; backdrop-filter: blur(2px); }
 .rodape { text-align:center; padding:16px; font-size:12px; color:#666; }
 .sair-link { color:#888; text-decoration:underline; cursor:pointer; }
-@media (max-width:480px) { .relogio { font-size:36px; } .apps { gap:24px; } }
+@media (max-width:480px) { .relogio { font-size:36px; } .apps { gap:22px; } }
 </style></head>
 <body>
 <div class="status-topo">
   <div class="relogio" id="relogio">--:--</div>
   <div class="data" id="dataAtual"></div>
+  <div class="contadores">
+    <div class="contador-item"><span class="pontinho-online"></span><span id="qtdOnline">{qtd_online}</span> online</div>
+    <div class="contador-item"><span id="qtdContas">{qtd_contas}</span> contas</div>
+  </div>
 </div>
 <div class="apps">
   <a class="app-icone" href="/rede"><div class="icone-quadrado">W</div>JarvisWEB</a>
   <a class="app-icone" href="/painel"><div class="icone-quadrado">J</div>Jarvis</a>
+  <a class="app-icone" href="/zap"><div class="icone-quadrado">Z</div>JarvisZap</a>
+  <a class="app-icone" href="/extensao"><div class="icone-quadrado">&lt;/&gt;</div>Jarvis Extensao</a>
   <a class="app-icone" href="/suporte"><div class="icone-quadrado">S</div>Suporte</a>
 </div>
 <div class="rodape"><span class="sair-link" onclick="location.href='/logout'">Sair da conta</span></div>
@@ -578,6 +743,20 @@ function atualizarRelogio() {
 }
 atualizarRelogio();
 setInterval(atualizarRelogio, 1000);
+
+// avisa o servidor que esta conta esta online e atualiza os contadores
+async function pulsarPresenca() {
+    try {
+        const r = await fetch("/heartbeat", { method: "POST" });
+        const d = await r.json();
+        if (d && d.ok) {
+            document.getElementById("qtdOnline").textContent = d.online;
+            document.getElementById("qtdContas").textContent = d.contas;
+        }
+    } catch (e) {}
+}
+pulsarPresenca();
+setInterval(pulsarPresenca, 20000);
 </script>
 </body></html>
 """
@@ -1400,6 +1579,293 @@ if (ehAgente) {
 </body></html>
 """
 
+# ---------- CONTA BLOQUEADA (moderacao) ----------
+PAGINA_BLOQUEADO = """
+<!DOCTYPE html>
+<html lang="pt-BR"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Jarvis</title><style>""" + ESTILO_COMUM + """
+body { height:100vh; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:24px; }
+.icone-bloqueio { font-size:48px; margin-bottom:16px; }
+h2 { margin:0 0 10px; }
+p { color:#999; max-width:340px; }
+a { color:#fff; margin-top:18px; text-decoration:underline; }
+</style></head><body>
+<div class="icone-bloqueio">&#128683;</div>
+<h2>Conta bloqueada no JarvisZap</h2>
+<p>O bot do Jarvis identificou envios repetidos de conteudo proibido (pornografia, conteudo adulto ou conteudo de terror/ameaca) e bloqueou esta conta para o JarvisZap. Se acha que foi um engano, abra um chamado no Suporte.</p>
+<a href="/suporte">Ir para o Suporte</a><br><a href="/inicio">Voltar ao inicio</a>
+</body></html>
+"""
+
+# ---------- JARVISZAP ----------
+PAGINA_ZAP = """
+<!DOCTYPE html>
+<html lang="pt-BR"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>JarvisZap</title>
+<style>
+""" + ESTILO_COMUM + """
+body { display:flex; height:100vh; overflow:hidden; }
+.sidebar-zap { width:280px; background:#0d0d0d; border-right:1px solid #ffffff22; display:flex; flex-direction:column; flex-shrink:0; }
+.topo-zap-lista { padding:14px 16px; border-bottom:1px solid #ffffff22; display:flex; align-items:center; justify-content:space-between; }
+.topo-zap-lista a { color:#fff; text-decoration:none; font-size:18px; }
+.btn-add-contato { background:#1a1a1a; border:1px solid #ffffff33; color:#fff; border-radius:8px; padding:6px 10px; cursor:pointer; font-size:18px; line-height:1; }
+.lista-contatos { flex:1; overflow-y:auto; }
+.item-contato { display:flex; align-items:center; gap:10px; padding:12px 14px; cursor:pointer; border-bottom:1px solid #ffffff11; }
+.item-contato:hover, .item-contato.ativo { background:#1a1a1a; }
+.item-contato img { width:38px; height:38px; border-radius:50%; object-fit:cover; }
+.item-contato .nome { font-size:14px; }
+.item-contato .idc { font-size:11px; color:#888; }
+.vazio-contatos { padding:20px; color:#777; font-size:13px; text-align:center; }
+.chat-area { flex:1; display:flex; flex-direction:column; min-width:0; }
+.topo-chat { padding:14px 18px; border-bottom:1px solid #ffffff22; display:flex; align-items:center; gap:12px; }
+.topo-chat img { width:34px; height:34px; border-radius:50%; object-fit:cover; }
+.badge-cripto { margin-left:auto; font-size:11px; padding:4px 10px; border-radius:12px; background:#0d0d0d; border:1px solid #3ddc6a55; color:#3ddc6a; display:none; }
+.badge-cripto.ativo { display:inline-block; }
+.msgs-zap { flex:1; overflow-y:auto; padding:18px; display:flex; flex-direction:column; gap:10px; }
+.bolha { max-width:65%; padding:10px 14px; border-radius:12px; line-height:1.4; font-size:14px; position:relative; }
+.bolha.minha { align-self:flex-end; background:#1f6feb33; border:1px solid #1f6feb55; }
+.bolha.dele { align-self:flex-start; background:#0d0d0d; border:1px solid #ffffff22; }
+.bolha.sistema { align-self:center; background:transparent; color:#888; font-size:12px; border:none; }
+.bolha img, .bolha video { max-width:220px; border-radius:8px; margin-top:4px; display:block; }
+.bolha audio { margin-top:4px; }
+.bolha .denunciar { display:block; margin-top:6px; font-size:10px; color:#888; cursor:pointer; text-decoration:underline; }
+.sem-conversa { flex:1; display:flex; align-items:center; justify-content:center; color:#666; }
+.area-input-zap { padding:12px 16px; border-top:1px solid #ffffff22; display:flex; gap:8px; align-items:center; }
+.area-input-zap input[type=text] { flex:1; padding:12px 14px; border-radius:20px; border:1px solid #ffffff33; background:#0d0d0d; color:#f2f2f2; font-size:14px; }
+.area-input-zap button, .area-input-zap label { background:#1a1a1a; border:1px solid #ffffff33; color:#fff; border-radius:50%; width:40px; height:40px; display:flex; align-items:center; justify-content:center; cursor:pointer; font-size:16px; flex-shrink:0; }
+.area-input-zap button.enviar { background:#fff; color:#000; }
+.area-input-zap button.gravando { background:#ff3b3b; }
+@media (max-width:720px) {
+  .sidebar-zap { position:fixed; z-index:20; height:100vh; transition:margin-left 0.2s; }
+  .sidebar-zap.recolhida { margin-left:-280px; }
+  .bolha { max-width:85%; }
+}
+</style></head>
+<body>
+<div class="sidebar-zap" id="sidebarZap">
+  <div class="topo-zap-lista"><a href="/inicio">&#8592;</a><b>JarvisZap</b><span class="btn-add-contato" onclick="adicionarContato()">+</span></div>
+  <div class="lista-contatos" id="listaContatos"><div class="vazio-contatos">Carregando...</div></div>
+</div>
+<div class="chat-area">
+  <div class="sem-conversa" id="semConversa">Adicione um contato pelo ID (#) para comecar a conversar.</div>
+  <div id="conversaAberta" style="display:none; flex:1; display:flex; flex-direction:column; min-height:0;">
+    <div class="topo-chat">
+      <img id="avatarChatAtual" src="">
+      <div><div id="nomeChatAtual" style="font-weight:bold;"></div><div id="idChatAtual" style="font-size:11px;color:#888;"></div></div>
+      <span class="badge-cripto" id="badgeCripto">&#128274; criptografado</span>
+    </div>
+    <div class="msgs-zap" id="msgsZap"></div>
+    <div class="area-input-zap">
+      <label title="Imagem">&#128247;<input type="file" id="inputImagem" accept="image/*" style="display:none" onchange="enviarArquivo(this,'imagem')"></label>
+      <label title="Video">&#127909;<input type="file" id="inputVideo" accept="video/*" style="display:none" onchange="enviarArquivo(this,'video')"></label>
+      <button title="Gravar audio" id="botaoGravar" onclick="alternarGravacaoAudio()">&#127908;</button>
+      <input type="text" id="campoZap" placeholder="Mensagem (dica: digite 'criptografia de 15/08/2000' para ativar a criptografia desta conversa)" onkeydown="if(event.key==='Enter')enviarTextoZap()">
+      <button class="enviar" onclick="enviarTextoZap()">&#10148;</button>
+    </div>
+  </div>
+</div>
+<script>
+let contatoAtual = null;
+let contatos = [];
+
+async function carregarContatos() {
+    const r = await fetch("/zap/contatos");
+    contatos = await r.json();
+    const lista = document.getElementById("listaContatos");
+    if (contatos.length === 0) { lista.innerHTML = '<div class="vazio-contatos">Nenhum contato ainda. Toque em + para adicionar pelo ID.</div>'; return; }
+    lista.innerHTML = "";
+    contatos.forEach(c => {
+        const div = document.createElement("div");
+        div.className = "item-contato" + (contatoAtual === c.usuario ? " ativo" : "");
+        div.onclick = () => abrirConversa(c);
+        div.innerHTML = `<img src="${c.avatar}"><div><div class="nome">${c.usuario}</div><div class="idc">#${c.id_publico}</div></div>`;
+        lista.appendChild(div);
+    });
+}
+
+async function adicionarContato() {
+    const id = prompt("Digite o ID (#) da pessoa que voce quer adicionar:");
+    if (!id) return;
+    const r = await fetch("/zap/adicionar_contato", { method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({id: id.trim()}) });
+    const d = await r.json();
+    if (!d.ok) { alert(d.erro || "Nao foi possivel adicionar."); return; }
+    await carregarContatos();
+}
+
+function abrirConversa(c) {
+    contatoAtual = c.usuario;
+    document.getElementById("semConversa").style.display = "none";
+    document.getElementById("conversaAberta").style.display = "flex";
+    document.getElementById("avatarChatAtual").src = c.avatar;
+    document.getElementById("nomeChatAtual").textContent = c.usuario;
+    document.getElementById("idChatAtual").textContent = "#" + c.id_publico;
+    if (window.innerWidth <= 720) document.getElementById("sidebarZap").classList.add("recolhida");
+    carregarContatos();
+    carregarMensagens();
+}
+
+function renderizarBolha(m) {
+    if (m.tipo === "sistema") return `<div class="bolha sistema">${m.conteudo}</div>`;
+    let corpo = "";
+    if (m.tipo === "texto") corpo = escaparHtml(m.conteudo);
+    else if (m.tipo === "imagem") corpo = `<img src="${m.conteudo}">`;
+    else if (m.tipo === "video") corpo = `<video src="${m.conteudo}" controls></video>`;
+    else if (m.tipo === "audio") corpo = `<audio src="${m.conteudo}" controls></audio>`;
+    const denunciar = m.tipo !== "sistema" && !m.minha ? `<span class="denunciar" onclick="denunciarMensagem(${m.id})">Denunciar</span>` : "";
+    return `<div class="bolha ${m.minha ? 'minha' : 'dele'}">${corpo}${denunciar}</div>`;
+}
+function escaparHtml(t) { const d = document.createElement("div"); d.textContent = t; return d.innerHTML; }
+
+async function carregarMensagens() {
+    if (!contatoAtual) return;
+    const r = await fetch("/zap/mensagens/" + encodeURIComponent(contatoAtual));
+    const d = await r.json();
+    document.getElementById("badgeCripto").classList.toggle("ativo", d.criptografado);
+    const caixa = document.getElementById("msgsZap");
+    caixa.innerHTML = d.mensagens.map(renderizarBolha).join("");
+    caixa.scrollTop = caixa.scrollHeight;
+}
+
+async function enviarTextoZap() {
+    const campo = document.getElementById("campoZap");
+    const texto = campo.value.trim();
+    if (!texto || !contatoAtual) return;
+    campo.value = "";
+    const r = await fetch("/zap/enviar", { method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({contato: contatoAtual, tipo: "texto", conteudo: texto}) });
+    const d = await r.json();
+    if (d.bloqueado) { window.location.href = "/zap"; return; }
+    if (!d.ok) { alert(d.erro || "Nao foi possivel enviar."); }
+    carregarMensagens();
+}
+
+async function enviarArquivo(input, tipo) {
+    const arquivo = input.files[0];
+    if (!arquivo || !contatoAtual) return;
+    const form = new FormData();
+    form.append("contato", contatoAtual); form.append("tipo", tipo); form.append("arquivo", arquivo);
+    const r = await fetch("/zap/enviar_arquivo", { method: "POST", body: form });
+    const d = await r.json();
+    input.value = "";
+    if (d.bloqueado) { window.location.href = "/zap"; return; }
+    if (!d.ok) { alert(d.erro || "Nao foi possivel enviar."); }
+    carregarMensagens();
+}
+
+async function denunciarMensagem(id) {
+    if (!confirm("Denunciar esta mensagem para o bot do Jarvis analisar?")) return;
+    await fetch("/zap/denunciar", { method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({mensagem_id: id}) });
+    alert("Denuncia enviada.");
+}
+
+// ---- gravacao de audio ----
+let gravador = null, pedacosAudio = [], gravandoAudio = false;
+async function alternarGravacaoAudio() {
+    const botao = document.getElementById("botaoGravar");
+    if (gravandoAudio) { gravador.stop(); return; }
+    if (!contatoAtual) { alert("Abra uma conversa primeiro."); return; }
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        pedacosAudio = [];
+        gravador = new MediaRecorder(stream);
+        gravador.ondataavailable = e => pedacosAudio.push(e.data);
+        gravador.onstop = async () => {
+            gravandoAudio = false; botao.classList.remove("gravando");
+            const blob = new Blob(pedacosAudio, { type: "audio/webm" });
+            const form = new FormData();
+            form.append("contato", contatoAtual); form.append("tipo", "audio"); form.append("arquivo", blob, "audio.webm");
+            const r = await fetch("/zap/enviar_arquivo", { method: "POST", body: form });
+            const d = await r.json();
+            if (d.bloqueado) { window.location.href = "/zap"; return; }
+            carregarMensagens();
+            stream.getTracks().forEach(t => t.stop());
+        };
+        gravador.start(); gravandoAudio = true; botao.classList.add("gravando");
+    } catch (e) { alert("Nao foi possivel acessar o microfone."); }
+}
+
+carregarContatos();
+setInterval(() => { if (contatoAtual) carregarMensagens(); }, 4000);
+</script>
+</body></html>
+"""
+
+# ---------- JARVIS EXTENSAO (chat focado em gerar codigo) ----------
+PAGINA_EXTENSAO = """
+<!DOCTYPE html>
+<html lang="pt-BR"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Jarvis Extensao</title>
+<style>
+""" + ESTILO_COMUM + """
+body { display:flex; flex-direction:column; height:100vh; overflow:hidden; }
+.topo-ext { padding:14px 18px; border-bottom:1px solid #ffffff22; display:flex; align-items:center; gap:12px; }
+.topo-ext a { color:#fff; text-decoration:none; font-size:18px; }
+.seletor-linguagem { margin-left:auto; background:#0d0d0d; color:#fff; border:1px solid #ffffff33; border-radius:6px; padding:6px; font-size:12px; }
+.msgs-ext { flex:1; overflow-y:auto; padding:20px; display:flex; flex-direction:column; gap:16px; }
+.bloco-ext { max-width:80%; padding:12px 16px; border-radius:12px; line-height:1.5; font-size:14px; }
+.bloco-ext.usuario { align-self:flex-end; background:#1a1a1a; }
+.bloco-ext.jarvis { align-self:flex-start; background:#0d0d0d; border:1px solid #ffffff22; }
+.bloco-ext pre { background:#000; border:1px solid #ffffff22; border-radius:8px; padding:12px; overflow-x:auto; position:relative; font-family: 'Consolas', monospace; font-size:13px; }
+.bloco-ext .copiar { position:absolute; top:6px; right:8px; background:#1a1a1a; border:1px solid #ffffff33; color:#fff; font-size:11px; padding:3px 8px; border-radius:6px; cursor:pointer; }
+.area-input-ext { padding:16px; border-top:1px solid #ffffff22; display:flex; gap:8px; }
+.area-input-ext input { flex:1; padding:14px; border-radius:8px; border:1px solid #ffffff33; background:#0d0d0d; color:#f2f2f2; font-size:14px; }
+.area-input-ext button { padding:14px 18px; border-radius:8px; border:none; background:#ffffff; color:#000; font-weight:bold; cursor:pointer; }
+</style></head>
+<body>
+<div class="topo-ext"><a href="/inicio">&#8592;</a><b>Jarvis Extensao</b>
+  <select class="seletor-linguagem" id="linguagem">
+    <option value="qualquer linguagem apropriada">Auto</option>
+    <option value="Python">Python</option>
+    <option value="Java">Java</option>
+    <option value="JavaScript">JavaScript</option>
+    <option value="C#">C#</option>
+    <option value="HTML/CSS/JS">HTML/CSS/JS</option>
+  </select>
+</div>
+<div class="msgs-ext" id="msgsExt">
+  <div class="bloco-ext jarvis">Modo Extensao ligado. Descreva o script/codigo que voce precisa (ex: "cria um script em Python que renomeia arquivos de uma pasta").</div>
+</div>
+<div class="area-input-ext">
+  <input type="text" id="campoExt" placeholder="Descreva o codigo que voce quer..." onkeydown="if(event.key==='Enter')enviarExt()">
+  <button onclick="enviarExt()">Gerar</button>
+</div>
+<script>
+function formatarResposta(texto) {
+    const partes = texto.split(/```(\\w*)\\n?/);
+    let html = "";
+    for (let i = 0; i < partes.length; i++) {
+        if (i % 2 === 0) { html += escaparHtml(partes[i]).replace(/\\n/g, "<br>"); }
+        else {
+            const codigo = partes[++i] || "";
+            html += `<pre><span class="copiar" onclick="copiarCodigo(this)">Copiar</span><code>${escaparHtml(codigo)}</code></pre>`;
+        }
+    }
+    return html;
+}
+function escaparHtml(t) { const d = document.createElement("div"); d.textContent = t; return d.innerHTML; }
+function copiarCodigo(botao) {
+    const codigo = botao.nextElementSibling.textContent;
+    navigator.clipboard.writeText(codigo);
+    botao.textContent = "Copiado!";
+    setTimeout(() => botao.textContent = "Copiar", 1200);
+}
+async function enviarExt() {
+    const campo = document.getElementById("campoExt");
+    const texto = campo.value.trim();
+    if (!texto) return;
+    const caixa = document.getElementById("msgsExt");
+    caixa.innerHTML += `<div class="bloco-ext usuario">${escaparHtml(texto)}</div>`;
+    campo.value = "";
+    caixa.scrollTop = caixa.scrollHeight;
+    const linguagem = document.getElementById("linguagem").value;
+    const r = await fetch("/extensao/chat", { method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({mensagem: texto, linguagem: linguagem}) });
+    const d = await r.json();
+    caixa.innerHTML += `<div class="bloco-ext jarvis">${formatarResposta(d.resposta || "Sem resposta.")}</div>`;
+    caixa.scrollTop = caixa.scrollHeight;
+}
+</script>
+</body></html>
+"""
+
 
 def pagina_login():
     if GOOGLE_CLIENT_ID:
@@ -1567,7 +2033,19 @@ def carregando():
 def inicio():
     if not session.get("usuario"):
         return redirect(url_for("login"))
-    return PAGINA_INICIO
+    marcar_atividade(session["usuario"])
+    pagina = PAGINA_INICIO.replace("{fundo_url}", FUNDO_INICIO_URL)
+    pagina = pagina.replace("{qtd_online}", str(contar_online()))
+    pagina = pagina.replace("{qtd_contas}", str(contar_contas()))
+    return pagina
+
+
+@app.route("/heartbeat", methods=["POST"])
+def heartbeat():
+    if not session.get("usuario"):
+        return jsonify({"ok": False}), 401
+    marcar_atividade(session["usuario"])
+    return jsonify({"ok": True, "online": contar_online(), "contas": contar_contas()})
 
 
 @app.route("/painel")
@@ -2099,6 +2577,270 @@ def suporte_responder():
     conexao.commit()
     conexao.close()
     return jsonify({"ok": True})
+
+
+# ================= ROTAS DO JARVISZAP =================
+
+@app.route("/zap")
+def zap():
+    if not session.get("usuario"):
+        return redirect(url_for("login"))
+    usuario = session["usuario"]
+    marcar_atividade(usuario)
+    linha = buscar_usuario(usuario)
+    if linha and linha["bloqueado"]:
+        return PAGINA_BLOQUEADO
+    return PAGINA_ZAP
+
+
+@app.route("/zap/contatos")
+def zap_contatos():
+    if not session.get("usuario"):
+        return jsonify([]), 401
+    usuario = session["usuario"]
+    conexao = obter_bd()
+    linhas = conexao.execute(
+        "SELECT contato FROM zap_contatos WHERE usuario = ? COLLATE NOCASE ORDER BY criado_em DESC", (usuario,)
+    ).fetchall()
+    resultado = []
+    for l in linhas:
+        u = buscar_usuario(l["contato"])
+        if not u:
+            continue
+        avatar = u["foto_perfil"] if u["foto_perfil"] else AVATAR_PADRAO + u["usuario"]
+        resultado.append({"usuario": u["usuario"], "id_publico": u["id_publico"], "avatar": avatar})
+    conexao.close()
+    return jsonify(resultado)
+
+
+@app.route("/zap/adicionar_contato", methods=["POST"])
+def zap_adicionar_contato():
+    if not session.get("usuario"):
+        return jsonify({"ok": False}), 401
+    usuario = session["usuario"]
+    dados = request.get_json() or {}
+    try:
+        id_publico = int(str(dados.get("id", "")).strip().lstrip("#"))
+    except ValueError:
+        return jsonify({"ok": False, "erro": "Digite um ID valido."})
+    alvo = buscar_usuario_por_id_publico(id_publico)
+    if not alvo:
+        return jsonify({"ok": False, "erro": "Nao existe ninguem com esse ID."})
+    if alvo["usuario"].lower() == usuario.lower():
+        return jsonify({"ok": False, "erro": "Esse ID e o seu."})
+    conexao = obter_bd()
+    conexao.execute(
+        "INSERT OR IGNORE INTO zap_contatos (usuario, contato, criado_em) VALUES (?, ?, ?)",
+        (usuario, alvo["usuario"], datetime.now().isoformat()),
+    )
+    conexao.commit()
+    conexao.close()
+    return jsonify({"ok": True})
+
+
+@app.route("/zap/mensagens/<contato>")
+def zap_mensagens(contato):
+    if not session.get("usuario"):
+        return jsonify({"mensagens": []}), 401
+    usuario = session["usuario"]
+    alvo = buscar_usuario(contato)
+    if not alvo:
+        return jsonify({"mensagens": [], "criptografado": False})
+    conversa = id_conversa(usuario, alvo["usuario"])
+    conexao = obter_bd()
+    conversa_info = conexao.execute("SELECT frase_cripto FROM zap_conversas WHERE conversa = ?", (conversa,)).fetchone()
+    frase = conversa_info["frase_cripto"] if conversa_info else None
+    linhas = conexao.execute(
+        "SELECT * FROM zap_mensagens WHERE conversa = ? ORDER BY id ASC LIMIT 300", (conversa,)
+    ).fetchall()
+    conexao.close()
+    mensagens = []
+    for l in linhas:
+        conteudo = l["conteudo"]
+        if l["criptografado"] and frase:
+            decifrado = descriptografar_texto(conteudo, frase)
+            conteudo = decifrado if decifrado is not None else "[mensagem criptografada]"
+        mensagens.append({
+            "id": l["id"], "tipo": l["tipo"], "conteudo": conteudo,
+            "minha": l["remetente"].lower() == usuario.lower(),
+        })
+    return jsonify({"mensagens": mensagens, "criptografado": bool(frase)})
+
+
+def _processar_comando_criptografia(conversa, usuario, texto):
+    """Se a mensagem for 'criptografia de <algo>', ativa a criptografia da conversa
+    (pode ser digitado por qualquer uma das duas pessoas - e o que o pedido chama de
+    'criptografia ativada por mim ou pelo bot do Jarvis')."""
+    texto_normalizado = texto.strip().lower()
+    if not texto_normalizado.startswith("criptografia de "):
+        return None
+    frase = texto.strip()[len("criptografia de "):].strip()
+    if not frase:
+        return None
+    conexao = obter_bd()
+    conexao.execute(
+        "INSERT INTO zap_conversas (conversa, frase_cripto, ativada_por, criado_em) VALUES (?, ?, ?, ?) "
+        "ON CONFLICT(conversa) DO UPDATE SET frase_cripto = excluded.frase_cripto, ativada_por = excluded.ativada_por",
+        (conversa, frase, usuario, datetime.now().isoformat()),
+    )
+    aviso = f"&#128274; {usuario} ativou a criptografia desta conversa (\"criptografia de {frase}\"). O bot do Jarvis vai cifrar as mensagens de texto a partir de agora."
+    conexao.execute(
+        "INSERT INTO zap_mensagens (conversa, remetente, destinatario, tipo, conteudo, criptografado, criado_em) VALUES (?, 'jarvis', ?, 'sistema', ?, 0, ?)",
+        (conversa, conversa, aviso, datetime.now().isoformat()),
+    )
+    conexao.commit()
+    conexao.close()
+    return frase
+
+
+@app.route("/zap/enviar", methods=["POST"])
+def zap_enviar():
+    if not session.get("usuario"):
+        return jsonify({"ok": False}), 401
+    usuario = session["usuario"]
+    linha_usuario = buscar_usuario(usuario)
+    if linha_usuario and linha_usuario["bloqueado"]:
+        return jsonify({"ok": False, "bloqueado": True, "erro": "Sua conta esta bloqueada no JarvisZap."})
+    dados = request.get_json() or {}
+    contato = (dados.get("contato") or "").strip()
+    tipo = dados.get("tipo", "texto")
+    conteudo = (dados.get("conteudo") or "").strip()
+    alvo = buscar_usuario(contato)
+    if not alvo or not conteudo:
+        return jsonify({"ok": False, "erro": "Dados invalidos."})
+    conversa = id_conversa(usuario, alvo["usuario"])
+
+    if tipo == "texto":
+        frase_ativada = _processar_comando_criptografia(conversa, usuario, conteudo)
+        if frase_ativada is not None:
+            return jsonify({"ok": True, "comando": True})
+        if mensagem_contem_conteudo_proibido(conteudo):
+            avisos, bloqueado = aplicar_moderacao(usuario)
+            conexao = obter_bd()
+            aviso = ("O bot do Jarvis bloqueou esta mensagem por conter conteudo proibido (adulto/+18 ou de terror/ameaca). "
+                     f"Aviso {avisos}/3." + (" Conta bloqueada no JarvisZap." if bloqueado else ""))
+            conexao.execute(
+                "INSERT INTO zap_mensagens (conversa, remetente, destinatario, tipo, conteudo, criptografado, criado_em) VALUES (?, 'jarvis', ?, 'sistema', ?, 0, ?)",
+                (conversa, conversa, aviso, datetime.now().isoformat()),
+            )
+            conexao.commit()
+            conexao.close()
+            return jsonify({"ok": False, "erro": "Mensagem bloqueada pelo bot do Jarvis.", "bloqueado": bloqueado})
+
+    conexao = obter_bd()
+    conversa_info = conexao.execute("SELECT frase_cripto FROM zap_conversas WHERE conversa = ?", (conversa,)).fetchone()
+    frase = conversa_info["frase_cripto"] if conversa_info else None
+    criptografado = 0
+    conteudo_salvo = conteudo
+    if tipo == "texto" and frase:
+        conteudo_salvo, ok = criptografar_texto(conteudo, frase)
+        criptografado = 1 if ok else 0
+    conexao.execute(
+        "INSERT INTO zap_mensagens (conversa, remetente, destinatario, tipo, conteudo, criptografado, criado_em) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (conversa, usuario, alvo["usuario"], tipo, conteudo_salvo, criptografado, datetime.now().isoformat()),
+    )
+    conexao.commit()
+    conexao.close()
+    return jsonify({"ok": True})
+
+
+@app.route("/zap/enviar_arquivo", methods=["POST"])
+def zap_enviar_arquivo():
+    if not session.get("usuario"):
+        return jsonify({"ok": False}), 401
+    usuario = session["usuario"]
+    linha_usuario = buscar_usuario(usuario)
+    if linha_usuario and linha_usuario["bloqueado"]:
+        return jsonify({"ok": False, "bloqueado": True, "erro": "Sua conta esta bloqueada no JarvisZap."})
+    contato = (request.form.get("contato") or "").strip()
+    tipo = request.form.get("tipo", "imagem")
+    alvo = buscar_usuario(contato)
+    arquivo = request.files.get("arquivo")
+    if not alvo or not arquivo:
+        return jsonify({"ok": False, "erro": "Dados invalidos."})
+    # Aviso: o bot do Jarvis ainda nao analisa o CONTEUDO de imagens/audios/videos
+    # (isso exigiria um servico externo de moderacao de midia). Por enquanto, a
+    # protecao para midia e o botao "Denunciar", que bloqueia a conta apos varias
+    # denuncias confirmadas (veja /zap/denunciar).
+    url = salvar_midia_zap(arquivo)
+    if not url:
+        return jsonify({"ok": False, "erro": "Nao foi possivel enviar o arquivo."})
+    conversa = id_conversa(usuario, alvo["usuario"])
+    conexao = obter_bd()
+    conexao.execute(
+        "INSERT INTO zap_mensagens (conversa, remetente, destinatario, tipo, conteudo, criptografado, criado_em) VALUES (?, ?, ?, ?, ?, 0, ?)",
+        (conversa, usuario, alvo["usuario"], tipo, url, datetime.now().isoformat()),
+    )
+    conexao.commit()
+    conexao.close()
+    return jsonify({"ok": True, "url": url})
+
+
+@app.route("/zap/denunciar", methods=["POST"])
+def zap_denunciar():
+    if not session.get("usuario"):
+        return jsonify({"ok": False}), 401
+    usuario = session["usuario"]
+    dados = request.get_json() or {}
+    try:
+        mensagem_id = int(dados.get("mensagem_id"))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False})
+    conexao = obter_bd()
+    msg = conexao.execute("SELECT * FROM zap_mensagens WHERE id = ?", (mensagem_id,)).fetchone()
+    if not msg:
+        conexao.close()
+        return jsonify({"ok": False})
+    conexao.execute(
+        "INSERT INTO zap_denuncias (mensagem_id, denunciante, criado_em) VALUES (?, ?, ?)",
+        (mensagem_id, usuario, datetime.now().isoformat()),
+    )
+    conexao.commit()
+    total_denuncias = conexao.execute("SELECT COUNT(*) AS n FROM zap_denuncias WHERE mensagem_id = ?", (mensagem_id,)).fetchone()["n"]
+    if total_denuncias >= 3:
+        aplicar_moderacao(msg["remetente"])
+    conexao.close()
+    return jsonify({"ok": True})
+
+
+# ================= ROTAS DO JARVIS EXTENSAO =================
+
+SISTEMA_EXTENSAO = (
+    "Voce e o Jarvis em Modo Extensao, um assistente de programacao. "
+    "Gere codigo limpo e funcional (Python, Java, JavaScript, C# ou o que for pedido), sempre dentro de blocos "
+    "de codigo cercados por crases triplas com o nome da linguagem (ex: ```python). "
+    "Antes do bloco, explique em 1-2 frases curtas o que o codigo faz. Responda em portugues do Brasil."
+)
+
+
+@app.route("/extensao")
+def extensao():
+    if not session.get("usuario"):
+        return redirect(url_for("login"))
+    marcar_atividade(session["usuario"])
+    return PAGINA_EXTENSAO
+
+
+@app.route("/extensao/chat", methods=["POST"])
+def extensao_chat():
+    if not session.get("usuario"):
+        return jsonify({"resposta": "Sessao expirada, faca login novamente."}), 401
+    if not _cliente:
+        return jsonify({"resposta": "Chave da IA nao configurada no servidor."})
+    dados = request.get_json() or {}
+    mensagem = (dados.get("mensagem") or "").strip()
+    linguagem = (dados.get("linguagem") or "qualquer linguagem apropriada").strip()
+    if not mensagem:
+        return jsonify({"resposta": "Descreva o que voce precisa que o codigo faca."})
+    resposta = _cliente.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[
+            {"role": "system", "content": SISTEMA_EXTENSAO},
+            {"role": "user", "content": f"Linguagem preferida: {linguagem}.\nPedido: {mensagem}"},
+        ],
+        max_tokens=1200,
+    )
+    return jsonify({"resposta": resposta.choices[0].message.content})
 
 
 if __name__ == "__main__":
