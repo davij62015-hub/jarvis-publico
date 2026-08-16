@@ -161,6 +161,7 @@ def iniciar_bd():
     except sqlite3.OperationalError:
         pass
     conexao.execute("CREATE TABLE IF NOT EXISTS curtidas (post_id INTEGER NOT NULL, usuario TEXT NOT NULL, PRIMARY KEY (post_id, usuario))")
+    conexao.execute("CREATE TABLE IF NOT EXISTS posts_salvos (post_id INTEGER NOT NULL, usuario TEXT NOT NULL, PRIMARY KEY (post_id, usuario))")
     conexao.execute("""
         CREATE TABLE IF NOT EXISTS comentarios (
             id INTEGER PRIMARY KEY AUTOINCREMENT, post_id INTEGER NOT NULL,
@@ -509,11 +510,10 @@ textarea { resize:vertical; min-height:60px; }
 input.codigo { text-align:center; letter-spacing:10px; font-size:22px; font-weight:bold; padding-left:8px; }
 label.campo-arquivo { display:flex; align-items:center; justify-content:center; gap:10px; padding:16px; border-radius:14px; border:1px dashed #ffffff33; color:#999; font-size:13px; cursor:pointer; transition:border-color 0.15s ease, color 0.15s ease; }
 label.campo-arquivo:hover { border-color:#ffffff66; color:#ccc; }
-.avatar-preview { width:64px; height:64px; border-radius:50%; object-fit:cover; border:1px solid #ffffff33; display:none; margin:0 auto; }
-.linha-id-cadastro { display:flex; align-items:center; justify-content:center; gap:10px; padding:12px 16px; border-radius:12px; border:1px solid #ffffff22; background:#0a0a0a; }
-.linha-id-cadastro span.rotulo { font-size:12px; color:#888; }
-.linha-id-cadastro span.valor { font-size:18px; font-weight:bold; letter-spacing:1px; flex:1; text-align:center; }
-.linha-id-cadastro button { background:none; border:none; color:#ffffff; text-decoration:underline; font-size:12px; cursor:pointer; padding:4px; }
+.avatar-escolher { display:flex; flex-direction:column; align-items:center; gap:8px; cursor:pointer; margin:4px auto 10px; }
+.avatar-preview-grande { width:96px; height:96px; border-radius:50%; object-fit:cover; border:2px solid #ffffff33; background:#0a0a0a; }
+.avatar-escolher-legenda { font-size:12px; color:#999; text-decoration:underline; }
+.avatar-escolher:hover .avatar-escolher-legenda { color:#ccc; }
 button.principal { width:100%; padding:16px; border-radius:12px; border:none; background:#ffffff; color:#000000; font-weight:bold; cursor:pointer; font-size:15px; margin-top:4px; transition:opacity 0.15s ease, transform 0.05s ease; }
 button.principal:hover:not(:disabled) { opacity:0.88; }
 button.principal:active:not(:disabled) { transform:scale(0.98); }
@@ -550,19 +550,15 @@ button.link-sutil:disabled { color:#444; text-decoration:none; cursor:default; }
 
 <!-- Etapa 3: cadastro (apenas para email novo) -->
 <div class="etapa" id="etapaCadastro">
-  <p class="subtitulo" style="margin-top:0;">Falta pouco! Complete seu perfil</p>
-  <input type="text" id="campoApelido" placeholder="Apelido" maxlength="40">
-  <img class="avatar-preview" id="previaAvatar">
-  <label class="campo-arquivo" id="rotuloFoto">Foto de perfil
+  <span class="voltar-etapa" onclick="irPara('etapaEmail')">&#8592;</span>
+  <label class="avatar-escolher" id="rotuloFoto">
+    <img class="avatar-preview-grande" id="previaAvatar" src="https://api.dicebear.com/7.x/identicon/svg?seed=novo">
+    <span class="avatar-escolher-legenda">Escolher foto</span>
     <input type="file" id="inputFoto" accept="image/*" style="display:none">
   </label>
-  <div class="linha-id-cadastro">
-    <span class="rotulo">ID</span>
-    <span class="valor" id="valorIdSugerido">#000000</span>
-    <button type="button" onclick="sugerirNovoId()">gerar outro</button>
-  </div>
-  <input type="date" id="campoNascimento">
-  <button type="button" class="principal" id="botaoFinalizar" onclick="finalizarCadastro()">Criar conta</button>
+  <input type="text" id="campoApelido" placeholder="Apelido" maxlength="40">
+  <textarea id="campoBio" placeholder="Bio (opcional)" maxlength="150"></textarea>
+  <button type="button" class="principal" id="botaoFinalizar" onclick="finalizarCadastro()">Confirmar</button>
 </div>
 
 <div class="erro" id="mensagemErro"></div>
@@ -646,7 +642,6 @@ async function confirmarCodigo() {
             mostrarErro(dados.erro || "Codigo incorreto.");
         } else if (dados.precisa_cadastro) {
             idEscolhido = dados.id_sugerido;
-            document.getElementById("valorIdSugerido").textContent = "#" + dados.id_sugerido;
             irPara("etapaCadastro");
         } else {
             window.location.href = "/carregando";
@@ -657,32 +652,21 @@ async function confirmarCodigo() {
     definirCarregando("botaoConfirmarCodigo", false, "Confirmar");
 }
 
-async function sugerirNovoId() {
-    const r = await fetch("/auth/sugerir_id");
-    const dados = await r.json();
-    idEscolhido = dados.id_publico;
-    document.getElementById("valorIdSugerido").textContent = "#" + dados.id_publico;
-}
-
 document.getElementById("inputFoto").addEventListener("change", function() {
     const arquivo = this.files[0];
     const previa = document.getElementById("previaAvatar");
-    document.getElementById("rotuloFoto").firstChild.textContent = arquivo ? arquivo.name : "Foto de perfil ";
-    if (arquivo) {
-        previa.src = URL.createObjectURL(arquivo);
-        previa.style.display = "block";
-    }
+    if (arquivo) previa.src = URL.createObjectURL(arquivo);
 });
 
 async function finalizarCadastro() {
     const apelido = document.getElementById("campoApelido").value.trim();
     if (!apelido) { mostrarErro("Escolha um apelido."); return; }
     mostrarErro("");
-    definirCarregando("botaoFinalizar", true, "Criar conta");
+    definirCarregando("botaoFinalizar", true, "Confirmar");
     const form = new FormData();
     form.append("apelido", apelido);
     form.append("id_publico", idEscolhido);
-    form.append("data_nascimento", document.getElementById("campoNascimento").value);
+    form.append("bio", document.getElementById("campoBio").value.trim());
     const arquivoFoto = document.getElementById("inputFoto").files[0];
     if (arquivoFoto) form.append("foto_perfil", arquivoFoto);
     try {
@@ -1198,114 +1182,179 @@ PAGINA_REDE = """
 <title>JarvisWEB</title>
 <style>
 """ + ESTILO_COMUM + """
-body { height:100vh; overflow-y:auto; }
-.topo { position:sticky; top:0; background:#000000; padding:14px 16px; border-bottom:1px solid #ffffff22; display:flex; align-items:center; gap:12px; z-index:5; }
-.voltar { color:#ffffff; text-decoration:none; font-size:20px; }
-.titulo-topo { font-weight:bold; letter-spacing:1px; }
-.container { max-width:600px; margin:0 auto; padding:16px; }
-.caixa-postar { background:#0d0d0d; border:1px solid #ffffff22; border-radius:12px; padding:14px; margin-bottom:20px; }
-.caixa-postar textarea { width:100%; background:#000000; border:1px solid #ffffff22; border-radius:8px; color:#f2f2f2; padding:10px; resize:vertical; min-height:60px; }
-.caixa-postar input { width:100%; margin-top:8px; padding:8px; border-radius:6px; border:1px solid #ffffff22; background:#000000; color:#f2f2f2; font-size:12px; }
-.caixa-postar button { margin-top:10px; padding:10px 18px; border-radius:8px; border:none; background:#ffffff; color:#000000; font-weight:bold; cursor:pointer; }
-.secao-titulo { font-weight:bold; font-size:15px; margin:6px 0 12px; color:#f2f2f2; }
-.post { background:#0d0d0d; border:1px solid #ffffff22; border-radius:12px; padding:14px; margin-bottom:16px; }
-.post-cabecalho { display:flex; align-items:center; gap:8px; margin-bottom:8px; font-weight:bold; }
-.post-cabecalho a { color:#f2f2f2; text-decoration:none; display:flex; align-items:center; gap:8px; }
-.post-cabecalho img { width:32px; height:32px; border-radius:50%; object-fit:cover; }
-.post-texto { margin:8px 0; white-space:pre-wrap; }
-.post img.post-imagem, .post video { max-width:100%; border-radius:8px; margin-top:6px; cursor:pointer; }
-.post-acoes { display:flex; gap:16px; margin-top:10px; font-size:13px; }
-.post-acoes span { cursor:pointer; color:#cccccc; }
-.post-acoes span.ativo { color:#ffffff; font-weight:bold; }
-.comentarios { margin-top:10px; border-top:1px solid #ffffff22; padding-top:8px; font-size:13px; }
-.comentario { margin-bottom:6px; }
-.comentario b { color:#ffffff; }
-.caixa-comentar { display:flex; gap:6px; margin-top:6px; }
-.caixa-comentar input { flex:1; padding:8px; border-radius:6px; border:1px solid #ffffff22; background:#000000; color:#f2f2f2; font-size:12px; }
-.caixa-comentar button { padding:8px 12px; border-radius:6px; border:none; background:#1a1a1a; color:#f2f2f2; cursor:pointer; font-size:12px; }
-.painel-admin { background:#0d0d0d; border:1px solid #ffffff33; border-radius:12px; padding:16px; margin-bottom:20px; font-size:13px; }
-.painel-titulo { font-weight:bold; font-size:15px; margin-bottom:12px; }
-.painel-categoria { border:1px solid #ffffff1a; border-radius:10px; padding:12px; margin-bottom:12px; background:#000000; }
-.painel-categoria:last-child { margin-bottom:0; }
-.painel-categoria-nome { font-weight:bold; color:#ffffff; margin-bottom:8px; font-size:12px; text-transform:uppercase; letter-spacing:0.5px; }
-.painel-admin input, .painel-admin input[type=color] { padding:8px; border-radius:6px; border:1px solid #ffffff22; background:#000000; color:#f2f2f2; margin-right:6px; margin-top:6px; width:auto; }
-.painel-admin button { padding:8px 14px; border-radius:6px; border:none; background:#ffffff; color:#000000; font-weight:bold; cursor:pointer; margin-top:6px; }
-.painel-resultado { margin-top:8px; color:#ffffff; }
-.campo-arquivo-admin { display:inline-flex; align-items:center; gap:6px; padding:8px; border-radius:6px; border:1px dashed #ffffff33; color:#999; font-size:12px; cursor:pointer; margin-top:6px; margin-right:6px; }
-.campo-arquivo-admin input { display:none; }
-.lightbox { display:none; position:fixed; inset:0; background:#000000ee; z-index:100; align-items:center; justify-content:center; padding:16px; }
-.lightbox.aberto { display:flex; }
-.lightbox img, .lightbox video { max-width:92vw; max-height:88vh; border-radius:10px; }
-.fechar-lightbox { position:absolute; top:20px; right:20px; color:#fff; font-size:28px; cursor:pointer; }
-@media (max-width:480px) { .container { padding:10px; } }
+html, body { height:100%; overflow:hidden; background:#000; }
+.feed-container { height:100vh; overflow-y:scroll; scroll-snap-type:y mandatory; scrollbar-width:none; }
+.feed-container::-webkit-scrollbar { display:none; }
+.post-slide { position:relative; height:100vh; scroll-snap-align:start; display:flex; align-items:center; justify-content:center; background:#000; overflow:hidden; }
+.post-slide .midia-post { max-width:100%; max-height:100%; width:100%; height:100%; object-fit:contain; background:#000; }
+.post-slide .midia-post.cobrir { object-fit:cover; }
+.post-slide .texto-puro { padding:30px; font-size:22px; line-height:1.5; text-align:center; max-width:90%; white-space:pre-wrap; }
+.overlay-gradiente { position:absolute; left:0; right:0; bottom:0; height:180px; background:linear-gradient(to top, #000000cc, transparent); pointer-events:none; }
+.info-post { position:absolute; left:16px; bottom:22px; right:80px; z-index:2; }
+.info-post a { color:#fff; text-decoration:none; font-weight:bold; display:flex; align-items:center; gap:8px; }
+.info-post img.avatar-post { width:34px; height:34px; border-radius:50%; object-fit:cover; }
+.legenda-post { margin-top:8px; font-size:14px; color:#eee; white-space:pre-wrap; }
+.acoes-laterais { position:absolute; right:12px; bottom:30px; display:flex; flex-direction:column; align-items:center; gap:22px; z-index:2; }
+.acao-lateral { display:flex; flex-direction:column; align-items:center; gap:4px; cursor:pointer; color:#fff; }
+.acao-lateral .icone-acao { width:44px; height:44px; border-radius:50%; background:#00000055; display:flex; align-items:center; justify-content:center; font-size:22px; }
+.acao-lateral.ativo .icone-acao { color:#ff3b5c; }
+.acao-lateral.salvo .icone-acao { color:#ffd23d; }
+.acao-lateral span.contagem { font-size:11px; }
+.icone-play-central { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-size:60px; color:#ffffffcc; pointer-events:none; opacity:0; transition:opacity 0.2s ease; z-index:3; }
+.icone-play-central.mostrar { opacity:1; }
+.nav-lateral { position:fixed; top:16px; left:12px; display:flex; flex-direction:column; gap:14px; z-index:10; }
+.nav-lateral a, .nav-lateral div.nav-botao { width:42px; height:42px; border-radius:50%; background:#0d0d0dcc; border:1px solid #ffffff22; display:flex; align-items:center; justify-content:center; color:#fff; text-decoration:none; font-size:18px; cursor:pointer; backdrop-filter:blur(3px); }
+.painel-busca { position:fixed; inset:0; background:#000000ee; z-index:30; display:none; flex-direction:column; padding:16px; }
+.painel-busca.aberto { display:flex; }
+.painel-busca input { padding:14px; border-radius:10px; border:1px solid #ffffff33; background:#0d0d0d; color:#fff; font-size:15px; }
+.painel-busca .fechar-busca { align-self:flex-end; color:#fff; font-size:24px; cursor:pointer; margin-bottom:10px; }
+.resultados-busca { margin-top:16px; overflow-y:auto; display:flex; flex-direction:column; gap:10px; }
+.resultado-busca-item { display:flex; align-items:center; gap:10px; padding:10px; border-radius:10px; background:#0d0d0d; border:1px solid #ffffff22; cursor:pointer; color:#fff; }
+.resultado-busca-item img { width:36px; height:36px; border-radius:50%; object-fit:cover; }
+.modal-fundo-postar { position:fixed; inset:0; background:#000000cc; z-index:40; display:none; align-items:flex-end; justify-content:center; }
+.modal-fundo-postar.aberto { display:flex; }
+.modal-postar { background:#0d0d0d; border-top:1px solid #ffffff22; border-radius:16px 16px 0 0; padding:18px; width:100%; max-width:520px; }
+.modal-postar textarea { width:100%; background:#000000; border:1px solid #ffffff22; border-radius:8px; color:#f2f2f2; padding:10px; resize:vertical; min-height:70px; }
+.modal-postar input { width:100%; margin-top:8px; padding:10px; border-radius:6px; border:1px solid #ffffff22; background:#000000; color:#f2f2f2; font-size:13px; }
+.modal-postar button.postar-final { margin-top:10px; width:100%; padding:12px; border-radius:8px; border:none; background:#ffffff; color:#000000; font-weight:bold; cursor:pointer; }
+.modal-postar .fechar-modal-postar { text-align:right; color:#999; cursor:pointer; margin-bottom:4px; }
+.folha-comentarios { position:fixed; left:0; right:0; bottom:0; top:35%; background:#0d0d0d; border-top:1px solid #ffffff22; border-radius:16px 16px 0 0; z-index:35; display:none; flex-direction:column; }
+.folha-comentarios.aberta { display:flex; }
+.folha-comentarios .cabecalho-folha { padding:14px; border-bottom:1px solid #ffffff22; display:flex; justify-content:space-between; align-items:center; font-weight:bold; }
+.folha-comentarios .fechar-folha { cursor:pointer; color:#999; font-size:20px; }
+.lista-comentarios { flex:1; overflow-y:auto; padding:14px; font-size:14px; }
+.comentario-item { margin-bottom:10px; }
+.comentario-item b { color:#fff; }
+.caixa-comentar-folha { display:flex; gap:8px; padding:12px; border-top:1px solid #ffffff22; }
+.caixa-comentar-folha input { flex:1; padding:10px; border-radius:8px; border:1px solid #ffffff22; background:#000; color:#f2f2f2; }
+.caixa-comentar-folha button { padding:10px 14px; border-radius:8px; border:none; background:#ffffff; color:#000; font-weight:bold; cursor:pointer; }
+.vazio-feed { display:flex; align-items:center; justify-content:center; height:100vh; color:#888; text-align:center; padding:30px; }
 </style></head>
 <body>
-<div class="topo"><a href="/inicio" class="voltar">&#8592;</a><span class="titulo-topo">JarvisWEB</span></div>
-<div class="container">
-  {painel_admin}
-  <div class="caixa-postar">
+<div class="nav-lateral">
+  <div class="nav-botao" onclick="abrirBusca()" title="Pesquisar">&#128269;</div>
+  <a href="/perfil/{usuario}" title="Perfil">&#128100;</a>
+  <a href="/zap" title="Mensagens">&#128172;</a>
+  <div class="nav-botao" onclick="abrirModalPostar()" title="Criar">+</div>
+  {icone_admin}
+</div>
+<div class="feed-container" id="feedContainer"></div>
+
+<div class="painel-busca" id="painelBusca">
+  <span class="fechar-busca" onclick="fecharBusca()">&times;</span>
+  <input type="text" id="campoBusca" placeholder="Buscar usuario ou legenda..." oninput="filtrarBusca()">
+  <div class="resultados-busca" id="resultadosBusca"></div>
+</div>
+
+<div class="modal-fundo-postar" id="modalPostar">
+  <div class="modal-postar">
+    <div class="fechar-modal-postar" onclick="fecharModalPostar()">Fechar &times;</div>
     <textarea id="textoPost" placeholder="No que voce esta pensando?"></textarea>
-    <input type="file" id="imagemPost" accept="image/*">
+    <input type="file" id="imagemPost" accept="image/*,video/*">
     <input type="text" id="linkImagemPost" placeholder="Link de imagem (opcional, se nao for enviar arquivo)">
     <input type="text" id="videoPost" placeholder="Link de video (Discord ou outro, opcional)">
-    <br><button onclick="publicar()">Postar</button>
+    <button class="postar-final" onclick="publicar()">Postar</button>
   </div>
-  <div class="secao-titulo">Feed publico</div>
-  <div id="feed"></div>
 </div>
-<div class="lightbox" id="lightbox" onclick="fecharLightbox()">
-  <span class="fechar-lightbox">&times;</span>
-  <div id="lightboxConteudo"></div>
+
+<div class="folha-comentarios" id="folhaComentarios">
+  <div class="cabecalho-folha"><span>Comentarios</span><span class="fechar-folha" onclick="fecharComentarios()">&times;</span></div>
+  <div class="lista-comentarios" id="listaComentariosFolha"></div>
+  <div class="caixa-comentar-folha">
+    <input type="text" id="campoComentarioFolha" placeholder="Comentar...">
+    <button onclick="enviarComentarioFolha()">Enviar</button>
+  </div>
 </div>
+
 <script>
 const usuarioLogado = "{usuario}";
-function abrirLightbox(src, tipo, ev) {
-    if (ev) ev.stopPropagation();
-    const el = document.getElementById("lightboxConteudo");
-    el.innerHTML = tipo === "video" ? "<video src='" + src + "' controls autoplay></video>" : "<img src='" + src + "'>";
-    document.getElementById("lightbox").classList.add("aberto");
+let posts = [];
+let postIdComentandoAgora = null;
+
+function escaparHtml(t) {
+    const d = document.createElement("div");
+    d.textContent = t || "";
+    return d.innerHTML;
 }
-function fecharLightbox() {
-    document.getElementById("lightbox").classList.remove("aberto");
-    document.getElementById("lightboxConteudo").innerHTML = "";
-}
+
 async function carregarFeed() {
     const resposta = await fetch("/rede/feed");
-    const posts = await resposta.json();
-    const div = document.getElementById("feed");
-    div.innerHTML = "";
-    posts.forEach(p => {
-        const bloco = document.createElement("div");
-        bloco.className = "post";
-        const selo = p.verificado ? ' """ + SELO_VERIFICADO.replace('"', "'") + """' : '';
-        let html = '<div class="post-cabecalho"><a href="/perfil/' + p.usuario + '"><img src="' + p.avatar + '">' + p.usuario + selo + (p.tag_html || '') + '</a></div>';
-        if (p.texto) html += '<div class="post-texto"></div>';
-        if (p.imagem) html += "<img class='post-imagem' src='" + p.imagem + "' onclick=\\"abrirLightbox('" + p.imagem + "','imagem',event)\\">";
-        if (p.video) html += "<video controls src='" + p.video + "' onclick=\\"abrirLightbox('" + p.video + "','video',event)\\"></video>";
-        html += '<div class="post-acoes">';
-        html += '<span class="' + (p.curtido ? 'ativo' : '') + '" onclick="curtir(' + p.id + ')">Curtir (' + p.curtidas + ')</span>';
-        html += '<span onclick="mostrarComentarios(' + p.id + ')">Comentar (' + p.comentarios.length + ')</span>';
-        if (p.usuario !== usuarioLogado) {
-            html += '<span class="' + (p.seguindo ? 'ativo' : '') + '" onclick="seguir(\\'' + p.usuario + '\\')">' + (p.seguindo ? 'Seguindo' : 'Seguir') + '</span>';
-        }
-        html += '</div><div class="comentarios" id="coment-' + p.id + '" style="display:none;">';
-        p.comentarios.forEach(c => { html += '<div class="comentario"><b>' + c.usuario + ':</b> </div>'; });
-        html += '<div class="caixa-comentar"><input id="novoComent-' + p.id + '" placeholder="Comentar..."><button onclick="comentar(' + p.id + ')">Enviar</button></div></div>';
-        bloco.innerHTML = html;
-        if (p.texto) bloco.querySelector(".post-texto").textContent = p.texto;
-        bloco.querySelectorAll(".comentario").forEach((elemento, i) => { elemento.querySelector("b").nextSibling.textContent = " " + p.comentarios[i].texto; });
-        div.appendChild(bloco);
-    });
+    posts = await resposta.json();
+    renderizarFeed(posts);
 }
-function mostrarComentarios(id) { const el = document.getElementById("coment-" + id); el.style.display = el.style.display === "none" ? "block" : "none"; }
+
+function renderizarFeed(lista) {
+    const container = document.getElementById("feedContainer");
+    container.innerHTML = "";
+    if (lista.length === 0) {
+        container.innerHTML = '<div class="vazio-feed">Ainda nao tem posts. Toque no + para publicar o primeiro!</div>';
+        return;
+    }
+    const selo = '""" + SELO_VERIFICADO.replace('"', "'") + """';
+    lista.forEach(p => {
+        const slide = document.createElement("div");
+        slide.className = "post-slide";
+        slide.dataset.postId = p.id;
+        let midiaHtml = "";
+        if (p.video) {
+            midiaHtml = "<video class='midia-post cobrir' src='" + p.video + "' loop playsinline muted controlsList='nodownload noremoteplayback' disablePictureInPicture oncontextmenu='return false' onclick='alternarPlay(this)'></video><div class='icone-play-central'>&#9658;</div>";
+        } else if (p.imagem) {
+            midiaHtml = "<img class='midia-post cobrir' src='" + p.imagem + "' oncontextmenu='return false'>";
+        } else {
+            midiaHtml = "<div class='texto-puro'></div>";
+        }
+        slide.innerHTML = `
+          ${midiaHtml}
+          <div class="overlay-gradiente"></div>
+          <div class="info-post">
+            <a href="/perfil/${p.usuario}"><img class="avatar-post" src="${p.avatar}">${p.usuario}${p.verificado ? selo : ''}${p.tag_html || ''}</a>
+            <div class="legenda-post"></div>
+          </div>
+          <div class="acoes-laterais">
+            <div class="acao-lateral ${p.curtido ? 'ativo' : ''}" onclick="curtir(${p.id})"><div class="icone-acao">&#9829;</div><span class="contagem">${p.curtidas}</span></div>
+            <div class="acao-lateral" onclick="abrirComentarios(${p.id})"><div class="icone-acao">&#128172;</div><span class="contagem">${p.comentarios.length}</span></div>
+            <div class="acao-lateral ${p.salvo ? 'salvo' : ''}" onclick="salvar(${p.id})"><div class="icone-acao">&#128278;</div><span class="contagem">Salvar</span></div>
+            <div class="acao-lateral" onclick="compartilhar(${p.id})"><div class="icone-acao">&#8663;</div><span class="contagem">Enviar</span></div>
+          </div>
+        `;
+        if (p.texto) slide.querySelector(p.video || p.imagem ? ".legenda-post" : ".texto-puro").textContent = p.texto;
+        container.appendChild(slide);
+    });
+    configurarObservadorVideo();
+}
+
+function alternarPlay(video) {
+    const icone = video.parentElement.querySelector(".icone-play-central");
+    if (video.paused) { video.play(); icone.classList.remove("mostrar"); }
+    else { video.pause(); icone.classList.add("mostrar"); }
+}
+
+let observadorVideo = null;
+function configurarObservadorVideo() {
+    if (observadorVideo) observadorVideo.disconnect();
+    observadorVideo = new IntersectionObserver((entradas) => {
+        entradas.forEach(entrada => {
+            const video = entrada.target.querySelector("video");
+            if (!video) return;
+            if (entrada.isIntersecting && entrada.intersectionRatio > 0.6) {
+                video.muted = false;
+                video.play().catch(() => {});
+            } else {
+                video.pause();
+            }
+        });
+    }, { threshold: [0, 0.6, 1] });
+    document.querySelectorAll(".post-slide").forEach(slide => observadorVideo.observe(slide));
+}
+
 async function publicar() {
-    const botao = document.querySelector(".caixa-postar button");
+    const botao = document.querySelector(".postar-final");
     const texto = document.getElementById("textoPost").value.trim();
     const arquivo = document.getElementById("imagemPost").files[0];
     const linkImagem = document.getElementById("linkImagemPost").value.trim();
     const video = document.getElementById("videoPost").value.trim();
     if (!texto && !arquivo && !linkImagem && !video) {
-        alert("Escreva algo, escolha uma foto ou cole um link antes de postar.");
+        alert("Escreva algo, escolha um arquivo ou cole um link antes de postar.");
         return;
     }
     const form = new FormData();
@@ -1326,6 +1375,7 @@ async function publicar() {
         document.getElementById("imagemPost").value = "";
         document.getElementById("linkImagemPost").value = "";
         document.getElementById("videoPost").value = "";
+        fecharModalPostar();
         carregarFeed();
     } catch (erro) {
         alert("Falha de conexao ao postar. Verifica sua internet e tenta de novo.");
@@ -1334,41 +1384,64 @@ async function publicar() {
         botao.textContent = "Postar";
     }
 }
+function abrirModalPostar() { document.getElementById("modalPostar").classList.add("aberto"); }
+function fecharModalPostar() { document.getElementById("modalPostar").classList.remove("aberto"); }
+
 async function curtir(id) { await fetch("/rede/curtir", { method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({post_id: id}) }); carregarFeed(); }
-async function comentar(id) {
-    const campo = document.getElementById("novoComent-" + id);
-    const texto = campo.value.trim();
-    if (!texto) return;
-    await fetch("/rede/comentar", { method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({post_id: id, texto: texto}) });
-    campo.value = ""; carregarFeed();
-}
+async function salvar(id) { await fetch("/rede/salvar", { method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({post_id: id}) }); carregarFeed(); }
 async function seguir(alvo) { await fetch("/rede/seguir", { method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({alvo: alvo}) }); carregarFeed(); }
-async function verificar() {
-    const email = document.getElementById("alvoVerificar").value.trim();
-    const resultado = document.getElementById("resultadoVerificar");
-    const resposta = await fetch("/rede/verificar", { method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({email: email}) });
-    const dados = await resposta.json();
-    resultado.textContent = dados.ok ? "Verificado com sucesso!" : (dados.erro || "Erro.");
-    if (dados.ok) carregarFeed();
+function compartilhar(id) {
+    const url = location.origin + "/rede#post-" + id;
+    if (navigator.share) { navigator.share({url: url}).catch(() => {}); }
+    else { navigator.clipboard.writeText(url); alert("Link copiado!"); }
 }
-async function criarTag() {
-    const form = new FormData();
-    form.append("nome", document.getElementById("tagNome").value.trim());
-    form.append("cor", document.getElementById("tagCor").value);
-    const arquivo = document.getElementById("tagFoto").files[0];
-    if (arquivo) form.append("foto", arquivo);
-    const resposta = await fetch("/rede/criar_tag", { method: "POST", body: form });
-    const dados = await resposta.json();
-    document.getElementById("resultadoTag").textContent = dados.ok ? "Tag criada!" : (dados.erro || "Erro.");
+
+function abrirComentarios(id) {
+    postIdComentandoAgora = id;
+    const post = posts.find(p => p.id === id);
+    const lista = document.getElementById("listaComentariosFolha");
+    lista.innerHTML = "";
+    (post ? post.comentarios : []).forEach(c => {
+        const item = document.createElement("div");
+        item.className = "comentario-item";
+        item.innerHTML = "<b></b> ";
+        item.querySelector("b").textContent = c.usuario + ":";
+        item.appendChild(document.createTextNode(c.texto));
+        lista.appendChild(item);
+    });
+    document.getElementById("folhaComentarios").classList.add("aberta");
 }
-async function atribuirTag() {
-    const email = document.getElementById("tagAlvo").value.trim();
-    const tag = document.getElementById("tagNomeAtribuir").value.trim();
-    const resposta = await fetch("/rede/atribuir_tag", { method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({email, tag}) });
-    const dados = await resposta.json();
-    document.getElementById("resultadoAtribuir").textContent = dados.ok ? "Tag atribuida!" : (dados.erro || "Erro.");
-    if (dados.ok) carregarFeed();
+function fecharComentarios() { document.getElementById("folhaComentarios").classList.remove("aberta"); }
+async function enviarComentarioFolha() {
+    const campo = document.getElementById("campoComentarioFolha");
+    const texto = campo.value.trim();
+    if (!texto || !postIdComentandoAgora) return;
+    await fetch("/rede/comentar", { method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({post_id: postIdComentandoAgora, texto: texto}) });
+    campo.value = "";
+    await carregarFeed();
+    abrirComentarios(postIdComentandoAgora);
 }
+
+function abrirBusca() { document.getElementById("painelBusca").classList.add("aberto"); document.getElementById("campoBusca").focus(); }
+function fecharBusca() { document.getElementById("painelBusca").classList.remove("aberto"); document.getElementById("resultadosBusca").innerHTML = ""; document.getElementById("campoBusca").value = ""; }
+function filtrarBusca() {
+    const termo = document.getElementById("campoBusca").value.trim().toLowerCase();
+    const div = document.getElementById("resultadosBusca");
+    div.innerHTML = "";
+    if (!termo) return;
+    const vistos = new Set();
+    posts.filter(p => p.usuario.toLowerCase().includes(termo) || (p.texto || "").toLowerCase().includes(termo)).forEach(p => {
+        if (vistos.has(p.usuario)) return;
+        vistos.add(p.usuario);
+        const item = document.createElement("div");
+        item.className = "resultado-busca-item";
+        item.innerHTML = "<img src='" + p.avatar + "'><span>" + p.usuario + "</span>";
+        item.onclick = () => location.href = "/perfil/" + p.usuario;
+        div.appendChild(item);
+    });
+    if (div.innerHTML === "") div.innerHTML = "<div style='color:#888;padding:10px;'>Nada encontrado.</div>";
+}
+
 carregarFeed();
 </script>
 </body></html>
@@ -1535,6 +1608,8 @@ async function enviarZap() {
 }
 
 carregarContatos();
+const paramCom = new URLSearchParams(location.search).get("com");
+if (paramCom) abrirConversa(paramCom);
 setInterval(() => { if (contatoAtual) carregarMensagens(); }, 4000);
 </script>
 </body></html>
@@ -1641,16 +1716,26 @@ body { height:100vh; overflow-y:auto; }
 .voltar { color:#ffffff; text-decoration:none; font-size:20px; }
 .banner { width:100%; height:140px; object-fit:cover; background:#0d0d0d; }
 .container { max-width:600px; margin:0 auto; padding:16px; }
-.cabecalho-perfil { display:flex; align-items:center; gap:20px; margin-bottom:14px; flex-wrap:wrap; margin-top:-40px; }
-.cabecalho-perfil img.avatar-grande { width:90px; height:90px; border-radius:50%; object-fit:cover; border:3px solid #000000; background:#0d0d0d; }
-.bio-perfil { font-size:14px; color:#cccccc; margin-bottom:16px; white-space:pre-wrap; }
-.id-publico { font-size:12px; color:#888; margin-top:2px; letter-spacing:0.5px; }
-.stats { display:flex; gap:20px; margin-top:8px; font-size:14px; }
-.stats b { display:block; font-size:16px; }
-.botao-seguir { padding:8px 18px; border-radius:10px; border:none; background:#ffffff; color:#000000; font-weight:bold; cursor:pointer; margin-top:10px; transition:opacity 0.15s ease; }
-.botao-seguir:hover { opacity:0.85; }
+.cabecalho-perfil { display:flex; flex-direction:column; align-items:center; text-align:center; gap:8px; margin:10px 0 20px; }
+.avatar-status-wrap { position:relative; width:96px; height:96px; }
+.cabecalho-perfil img.avatar-grande { width:96px; height:96px; border-radius:50%; object-fit:cover; border:3px solid #000000; background:#0d0d0d; }
+.status-dot { position:absolute; bottom:4px; right:4px; width:16px; height:16px; border-radius:50%; border:3px solid #000000; }
+.status-dot.online { background:#3ddc6a; }
+.status-dot.offline { background:#ff4d4d; }
+.status-dot.inativo { background:#888888; }
+.nome-perfil { margin:4px 0 0; font-size:19px; }
+.bio-perfil { font-size:14px; color:#cccccc; margin:0 0 4px; white-space:pre-wrap; max-width:320px; }
+.id-publico { font-size:12px; color:#888; }
+.stats-icones { display:flex; gap:26px; margin-top:6px; }
+.stat-icone { display:flex; flex-direction:column; align-items:center; gap:4px; }
+.circulo-stat { width:44px; height:44px; border-radius:50%; border:1px solid #ffffff33; display:flex; align-items:center; justify-content:center; font-weight:bold; font-size:14px; background:#0d0d0d; }
+.stat-icone span { font-size:11px; color:#999; }
+.botoes-perfil { display:flex; gap:10px; margin-top:8px; }
+.botao-seguir, .botao-mensagem { padding:8px 18px; border-radius:10px; border:none; background:#ffffff; color:#000000; font-weight:bold; cursor:pointer; transition:opacity 0.15s ease; text-decoration:none; display:inline-block; }
+.botao-seguir:hover, .botao-mensagem:hover { opacity:0.85; }
 .botao-seguir.ativo { background:#1a1a1a; color:#f2f2f2; border:1px solid #ffffff33; }
-.editar-perfil { background:#1a1a1a; border:1px solid #ffffff33; border-radius:10px; padding:14px; margin-bottom:20px; font-size:13px; }
+.botao-mensagem { background:#1a1a1a; color:#f2f2f2; border:1px solid #ffffff33; }
+.editar-perfil { background:#1a1a1a; border:1px solid #ffffff33; border-radius:10px; padding:14px; margin-bottom:20px; font-size:13px; text-align:left; }
 .editar-perfil input, .editar-perfil textarea { width:100%; padding:8px; margin-top:6px; border-radius:6px; border:1px solid #ffffff22; background:#000; color:#f2f2f2; font-family:inherit; }
 .editar-perfil button { margin-top:8px; padding:9px 16px; border-radius:8px; border:none; background:#ffffff; color:#000; font-weight:bold; cursor:pointer; transition:opacity 0.15s ease; }
 .editar-perfil button:hover { opacity:0.85; }
@@ -1662,22 +1747,30 @@ body { height:100vh; overflow-y:auto; }
 .grade-item { aspect-ratio:1; background:#0d0d0d; border-radius:4px; overflow:hidden; display:flex; align-items:center; justify-content:center; }
 .grade-item img, .grade-item video { width:100%; height:100%; object-fit:cover; }
 .grade-item.sem-midia { font-size:12px; color:#aaaaaa; padding:8px; text-align:center; }
-@media (max-width:480px) { .container { padding:10px; } .cabecalho-perfil img.avatar-grande { width:70px; height:70px; } .banner { height:100px; } }
+@media (max-width:480px) { .container { padding:10px; } .banner { height:100px; } }
 </style></head>
 <body>
 <div class="topo"><a href="/rede" class="voltar">&#8592;</a><span>Perfil</span></div>
 {banner_html}
 <div class="container">
   <div class="cabecalho-perfil">
-    <img class="avatar-grande" src="{avatar_url}">
-    <div>
-      <h2 style="margin:0;">{nome_usuario} {selo}</h2>
-      <div class="id-publico">ID #{id_publico}</div>
-      <div class="stats"><div><b>{qtd_posts}</b>posts</div><div><b>{qtd_seguidores}</b>seguidores</div><div><b>{qtd_seguindo}</b>seguindo</div></div>
+    <div class="avatar-status-wrap">
+      <img class="avatar-grande" src="{avatar_url}">
+      <span class="status-dot {status_classe}"></span>
+    </div>
+    <h2 class="nome-perfil">{nome_usuario} {selo}</h2>
+    <div class="id-publico">ID #{id_publico}</div>
+    {bio_html}
+    <div class="stats-icones">
+      <div class="stat-icone"><div class="circulo-stat">{qtd_posts}</div><span>posts</span></div>
+      <div class="stat-icone"><div class="circulo-stat">{qtd_seguidores}</div><span>seguidores</span></div>
+      <div class="stat-icone"><div class="circulo-stat">{qtd_seguindo}</div><span>seguindo</span></div>
+    </div>
+    <div class="botoes-perfil">
       {botao_seguir}
+      {botao_mensagem}
     </div>
   </div>
-  {bio_html}
   {editor_perfil}
   <div class="grade">{itens_grade}</div>
 </div>
@@ -1937,7 +2030,7 @@ def auth_completar_cadastro():
         session.pop("email_verificado_em", None)
         return jsonify({"ok": False, "erro": "Sessao expirada. Verifique seu email novamente."})
     apelido = request.form.get("apelido", "").strip()
-    data_nascimento = request.form.get("data_nascimento", "").strip() or None
+    bio = request.form.get("bio", "").strip() or None
     if not apelido:
         return jsonify({"ok": False, "erro": "Escolha um apelido."})
     conexao = obter_bd()
@@ -1958,7 +2051,7 @@ def auth_completar_cadastro():
             id_publico = 1 if eh_dono else gerar_id_publico(conexao)
     conexao.close()
     foto_perfil = salvar_imagem(request.files.get("foto_perfil"))
-    criar_usuario(apelido, email, foto_perfil=foto_perfil, data_nascimento=data_nascimento, id_publico=id_publico)
+    criar_usuario(apelido, email, foto_perfil=foto_perfil, bio=bio, id_publico=id_publico)
     session.pop("email_verificado", None)
     session.pop("email_verificado_em", None)
     session["usuario"] = apelido
@@ -2313,41 +2406,98 @@ def extensao_chat():
     return jsonify({"resposta": texto_resposta})
 
 
+PAGINA_ADMIN_REDE = """
+<!DOCTYPE html>
+<html lang="pt-BR"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>Painel do dev - JarvisWEB</title>
+<style>
+""" + ESTILO_COMUM + """
+body { min-height:100vh; }
+.topo { position:sticky; top:0; background:#000000; padding:14px 16px; border-bottom:1px solid #ffffff22; display:flex; align-items:center; gap:12px; z-index:5; }
+.voltar { color:#ffffff; text-decoration:none; font-size:20px; }
+.container { max-width:520px; margin:0 auto; padding:16px; }
+.painel-admin { background:#0d0d0d; border:1px solid #ffffff33; border-radius:12px; padding:16px; font-size:13px; }
+.painel-titulo { font-weight:bold; font-size:15px; margin-bottom:12px; }
+.painel-categoria { border:1px solid #ffffff1a; border-radius:10px; padding:12px; margin-bottom:12px; background:#000000; }
+.painel-categoria:last-child { margin-bottom:0; }
+.painel-categoria-nome { font-weight:bold; color:#ffffff; margin-bottom:8px; font-size:12px; text-transform:uppercase; letter-spacing:0.5px; }
+.painel-admin input, .painel-admin input[type=color] { padding:8px; border-radius:6px; border:1px solid #ffffff22; background:#000000; color:#f2f2f2; margin-right:6px; margin-top:6px; width:auto; }
+.painel-admin button { padding:8px 14px; border-radius:6px; border:none; background:#ffffff; color:#000000; font-weight:bold; cursor:pointer; margin-top:6px; }
+.painel-resultado { margin-top:8px; color:#ffffff; }
+.campo-arquivo-admin { display:inline-flex; align-items:center; gap:6px; padding:8px; border-radius:6px; border:1px dashed #ffffff33; color:#999; font-size:12px; cursor:pointer; margin-top:6px; margin-right:6px; }
+.campo-arquivo-admin input { display:none; }
+</style></head>
+<body>
+<div class="topo"><a href="/rede" class="voltar">&#8592;</a><span>Painel do desenvolvedor</span></div>
+<div class="container">
+  <div class="painel-admin">
+    <div class="painel-categoria">
+      <div class="painel-categoria-nome">Selo verificado</div>
+      <input id="alvoVerificar" placeholder="email da conta" type="email">
+      <button onclick="verificar()">Verificar</button>
+      <div id="resultadoVerificar" class="painel-resultado"></div>
+    </div>
+    <div class="painel-categoria">
+      <div class="painel-categoria-nome">Criar tag</div>
+      <input id="tagNome" placeholder="nome da tag">
+      <input id="tagCor" type="color" value="#ffffff">
+      <label class="campo-arquivo-admin">Foto da tag<input id="tagFoto" type="file" accept="image/*"></label>
+      <button onclick="criarTag()">Criar tag</button>
+      <div id="resultadoTag" class="painel-resultado"></div>
+    </div>
+    <div class="painel-categoria">
+      <div class="painel-categoria-nome">Atribuir tag</div>
+      <input id="tagAlvo" placeholder="email da conta" type="email">
+      <input id="tagNomeAtribuir" placeholder="nome da tag (vazio remove)">
+      <button onclick="atribuirTag()">Atribuir</button>
+      <div id="resultadoAtribuir" class="painel-resultado"></div>
+    </div>
+  </div>
+</div>
+<script>
+async function verificar() {
+    const email = document.getElementById("alvoVerificar").value.trim();
+    const resultado = document.getElementById("resultadoVerificar");
+    const resposta = await fetch("/rede/verificar", { method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({email: email}) });
+    const dados = await resposta.json();
+    resultado.textContent = dados.ok ? "Verificado com sucesso!" : (dados.erro || "Erro.");
+}
+async function criarTag() {
+    const form = new FormData();
+    form.append("nome", document.getElementById("tagNome").value.trim());
+    form.append("cor", document.getElementById("tagCor").value);
+    const arquivo = document.getElementById("tagFoto").files[0];
+    if (arquivo) form.append("foto", arquivo);
+    const resposta = await fetch("/rede/criar_tag", { method: "POST", body: form });
+    const dados = await resposta.json();
+    document.getElementById("resultadoTag").textContent = dados.ok ? "Tag criada!" : (dados.erro || "Erro.");
+}
+async function atribuirTag() {
+    const email = document.getElementById("tagAlvo").value.trim();
+    const tag = document.getElementById("tagNomeAtribuir").value.trim();
+    const resposta = await fetch("/rede/atribuir_tag", { method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({email, tag}) });
+    const dados = await resposta.json();
+    document.getElementById("resultadoAtribuir").textContent = dados.ok ? "Tag atribuida!" : (dados.erro || "Erro.");
+}
+</script>
+</body></html>
+"""
+
+
 @app.route("/rede")
 def rede():
     if not session.get("usuario"):
         return redirect(url_for("login"))
     usuario = session["usuario"]
-    eh_dev = eh_desenvolvedor(usuario)
-    painel_admin_html = ""
-    if eh_dev:
-        painel_admin_html = """
-        <div class="painel-admin">
-          <div class="painel-titulo">Painel do desenvolvedor</div>
-          <div class="painel-categoria">
-            <div class="painel-categoria-nome">Selo verificado</div>
-            <input id="alvoVerificar" placeholder="email da conta" type="email">
-            <button onclick="verificar()">Verificar</button>
-            <div id="resultadoVerificar" class="painel-resultado"></div>
-          </div>
-          <div class="painel-categoria">
-            <div class="painel-categoria-nome">Criar tag</div>
-            <input id="tagNome" placeholder="nome da tag">
-            <input id="tagCor" type="color" value="#ffffff">
-            <label class="campo-arquivo-admin">Foto da tag<input id="tagFoto" type="file" accept="image/*"></label>
-            <button onclick="criarTag()">Criar tag</button>
-            <div id="resultadoTag" class="painel-resultado"></div>
-          </div>
-          <div class="painel-categoria">
-            <div class="painel-categoria-nome">Atribuir tag</div>
-            <input id="tagAlvo" placeholder="email da conta" type="email">
-            <input id="tagNomeAtribuir" placeholder="nome da tag (vazio remove)">
-            <button onclick="atribuirTag()">Atribuir</button>
-            <div id="resultadoAtribuir" class="painel-resultado"></div>
-          </div>
-        </div>
-        """
-    return PAGINA_REDE.replace("{usuario}", usuario).replace("{painel_admin}", painel_admin_html)
+    icone_admin = '<a href="/rede/admin" title="Painel do dev">&#9881;</a>' if eh_desenvolvedor(usuario) else ""
+    return PAGINA_REDE.replace("{usuario}", usuario).replace("{icone_admin}", icone_admin)
+
+
+@app.route("/rede/admin")
+def rede_admin():
+    if not eh_desenvolvedor(session.get("usuario")):
+        return redirect(url_for("rede"))
+    return PAGINA_ADMIN_REDE
 
 
 @app.route("/perfil/<nome_usuario>")
@@ -2369,7 +2519,14 @@ def perfil(nome_usuario):
     qtd_seguidores = conexao.execute("SELECT COUNT(*) as c FROM seguidores WHERE seguido = ?", (nome_real,)).fetchone()["c"]
     qtd_seguindo = conexao.execute("SELECT COUNT(*) as c FROM seguidores WHERE seguidor = ?", (nome_real,)).fetchone()["c"]
     ja_segue = conexao.execute("SELECT 1 FROM seguidores WHERE seguidor = ? AND seguido = ?", (usuario_logado, nome_real)).fetchone()
+    linha_presenca = conexao.execute("SELECT visto_em FROM presenca WHERE usuario = ?", (nome_real,)).fetchone()
     conexao.close()
+    if not linha_presenca:
+        status_classe = "inativo"
+    elif datetime.now() - datetime.fromisoformat(linha_presenca["visto_em"]) <= timedelta(minutes=3):
+        status_classe = "online"
+    else:
+        status_classe = "offline"
     itens_grade = ""
     for p in posts:
         if p["imagem"]:
@@ -2380,6 +2537,7 @@ def perfil(nome_usuario):
             itens_grade += f'<div class="grade-item sem-midia">{(p["texto"] or "")[:40]}</div>'
     if nome_real == usuario_logado:
         botao_seguir = ""
+        botao_mensagem = ""
         editor_perfil = f"""
         <div class="editar-perfil"><b>Editar perfil</b>
         <textarea id="novaBio" placeholder="Bio">{linha_alvo['bio'] or ''}</textarea>
@@ -2400,8 +2558,10 @@ def perfil(nome_usuario):
         classe_ativo = "ativo" if ja_segue else ""
         texto_botao = "Seguindo" if ja_segue else "Seguir"
         botao_seguir = f'<button class="botao-seguir {classe_ativo}" onclick="seguirPerfil(\'{nome_real}\')">{texto_botao}</button>'
+        botao_mensagem = f'<a class="botao-mensagem" href="/zap?com={nome_real}">Mensagem</a>'
         editor_perfil = ""
     pagina = PAGINA_PERFIL.replace("{nome_usuario}", nome_real).replace("{avatar_url}", avatar).replace("{selo}", selo)
+    pagina = pagina.replace("{status_classe}", status_classe).replace("{botao_mensagem}", botao_mensagem)
     pagina = pagina.replace("{id_publico}", str(linha_alvo["id_publico"] or "-"))
     pagina = pagina.replace("{banner_html}", banner_html).replace("{bio_html}", bio_html)
     pagina = pagina.replace("{qtd_posts}", str(len(posts))).replace("{qtd_seguidores}", str(qtd_seguidores)).replace("{qtd_seguindo}", str(qtd_seguindo))
@@ -2478,7 +2638,13 @@ def rede_postar():
         if bloqueado:
             return jsonify({"ok": False, "erro": "Conteudo proibido. Sua conta foi bloqueada."}), 403
         return jsonify({"ok": False, "erro": f"Conteudo proibido (+18/perturbador). Aviso {avisos}/{LIMITE_AVISOS_BLOQUEIO}."}), 400
-    caminho_imagem = salvar_imagem(request.files.get("imagem"))
+    arquivo_enviado = request.files.get("imagem")
+    caminho_imagem = None
+    if arquivo_enviado and arquivo_enviado.filename:
+        if (arquivo_enviado.mimetype or "").lower().startswith("video/"):
+            video = salvar_arquivo_enviado(arquivo_enviado) or video
+        else:
+            caminho_imagem = salvar_imagem(arquivo_enviado)
     if not caminho_imagem and imagem_link:
         if not (imagem_link.startswith("http://") or imagem_link.startswith("https://")):
             return jsonify({"ok": False, "erro": "O link de imagem precisa comecar com http:// ou https://"}), 400
@@ -2503,6 +2669,7 @@ def rede_feed():
     for p in posts:
         curtidas = conexao.execute("SELECT COUNT(*) as c FROM curtidas WHERE post_id = ?", (p["id"],)).fetchone()["c"]
         curtido = conexao.execute("SELECT 1 FROM curtidas WHERE post_id = ? AND usuario = ?", (p["id"], usuario)).fetchone() is not None
+        salvo = conexao.execute("SELECT 1 FROM posts_salvos WHERE post_id = ? AND usuario = ?", (p["id"], usuario)).fetchone() is not None
         comentarios = conexao.execute("SELECT usuario, texto FROM comentarios WHERE post_id = ? ORDER BY id ASC", (p["id"],)).fetchall()
         seguindo = conexao.execute("SELECT 1 FROM seguidores WHERE seguidor = ? AND seguido = ?", (usuario, p["usuario"])).fetchone() is not None
         linha_autor = conexao.execute("SELECT verificado, foto_perfil, tag FROM usuarios WHERE usuario = ?", (p["usuario"],)).fetchone()
@@ -2511,7 +2678,7 @@ def rede_feed():
         tag_html = html_tag(linha_autor["tag"] if linha_autor else None)
         resultado.append({
             "id": p["id"], "usuario": p["usuario"], "texto": p["texto"], "imagem": p["imagem"], "video": p["video"],
-            "avatar": avatar, "curtidas": curtidas, "curtido": curtido, "seguindo": seguindo, "verificado": verificado,
+            "avatar": avatar, "curtidas": curtidas, "curtido": curtido, "salvo": salvo, "seguindo": seguindo, "verificado": verificado,
             "tag_html": tag_html,
             "comentarios": [{"usuario": c["usuario"], "texto": c["texto"]} for c in comentarios],
         })
@@ -2531,6 +2698,23 @@ def rede_curtir():
         conexao.execute("DELETE FROM curtidas WHERE post_id = ? AND usuario = ?", (post_id, usuario))
     else:
         conexao.execute("INSERT INTO curtidas (post_id, usuario) VALUES (?, ?)", (post_id, usuario))
+    conexao.commit()
+    conexao.close()
+    return jsonify({"ok": True})
+
+
+@app.route("/rede/salvar", methods=["POST"])
+def rede_salvar():
+    if not session.get("usuario"):
+        return jsonify({"ok": False}), 401
+    usuario = session["usuario"]
+    post_id = request.get_json().get("post_id")
+    conexao = obter_bd()
+    ja_salvo = conexao.execute("SELECT 1 FROM posts_salvos WHERE post_id = ? AND usuario = ?", (post_id, usuario)).fetchone()
+    if ja_salvo:
+        conexao.execute("DELETE FROM posts_salvos WHERE post_id = ? AND usuario = ?", (post_id, usuario))
+    else:
+        conexao.execute("INSERT INTO posts_salvos (post_id, usuario) VALUES (?, ?)", (post_id, usuario))
     conexao.commit()
     conexao.close()
     return jsonify({"ok": True})
