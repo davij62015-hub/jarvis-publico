@@ -49,6 +49,25 @@ except ImportError:
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET", "troque_essa_chave_em_producao")
 
+
+@app.after_request
+def _adicionar_cabecalhos_seguranca(resposta):
+    """Protege as pastas do site: impede listagem de diretorio, sniffing de tipo de
+    arquivo e que o site seja carregado dentro de um iframe de outro dominio."""
+    resposta.headers["X-Content-Type-Options"] = "nosniff"
+    resposta.headers["X-Frame-Options"] = "SAMEORIGIN"
+    resposta.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    return resposta
+
+
+@app.route("/static/uploads/")
+@app.route("/static/")
+def _bloquear_listagem_pastas():
+    """Ninguem consegue navegar/listar o conteudo das pastas - so acessar um
+    arquivo especifico se souber o link exato dele."""
+    return "Acesso negado.", 403
+
+
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 _cliente = Groq(api_key=GROQ_API_KEY) if (Groq and GROQ_API_KEY) else None
 
@@ -239,12 +258,10 @@ def iniciar_bd():
 
 
 def gerar_id_publico(conexao):
-    """Gera um ID permanente aleatorio, unico, sempre acima de 10 (1 e reservado ao dono)."""
-    while True:
-        candidato = random.randint(11, 999999)
-        existe = conexao.execute("SELECT 1 FROM usuarios WHERE id_publico = ?", (candidato,)).fetchone()
-        if not existe:
-            return candidato
+    """IDs de 2 a 11 sao reservados (so o dono atribui manualmente pelo painel).
+    A partir do 12, todo mundo recebe automaticamente em ordem crescente."""
+    maior = conexao.execute("SELECT MAX(id_publico) as m FROM usuarios WHERE id_publico >= 12").fetchone()["m"]
+    return (maior or 11) + 1
 
 
 iniciar_bd()
@@ -600,7 +617,7 @@ button.link-sutil:disabled { color:#444; text-decoration:none; cursor:default; }
 @media (max-width:420px) { h2 { font-size:19px; } input, textarea, button.principal { font-size:14px; padding:14px; } }
 </style></head>
 <body>
-<img src="/static/logo.jpg" class="logo-img" onerror="this.style.display='none'">
+<img src="{logo_url}" class="logo-img" onerror="this.style.display='none'">
 <h2>Entrar no Jarvis</h2>
 <div class="cartao">
 {bloco_google}
@@ -776,6 +793,11 @@ PAGINA_INICIO = """
 <!DOCTYPE html>
 <html lang="pt-BR"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <title>Jarvis</title>
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#000000">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="apple-touch-icon" href="{icone_app_url}">
 <style>
 """ + ESTILO_COMUM + """
 body {
@@ -812,6 +834,7 @@ body {
   <a class="app-icone" href="/zap"><div class="icone-quadrado">{icone_zap}</div>JarvisZap</a>
   <a class="app-icone" href="/extensao"><div class="icone-quadrado">&lt;/&gt;</div>Jarvis Extensao</a>
   <a class="app-icone" href="/suporte"><div class="icone-quadrado">{icone_suporte}</div>Suporte</a>
+  <a class="app-icone" href="/baixar"><div class="icone-quadrado">&#8595;</div>Baixar app</a>
 </div>
 <div class="rodape"><span class="sair-link" onclick="location.href='/logout'">Sair da conta</span></div>
 <script>
@@ -884,7 +907,7 @@ body { display:flex; height:100vh; overflow:hidden; }
 .pontos-carregando span:nth-child(2) { animation-delay: 0.15s; }
 .pontos-carregando span:nth-child(3) { animation-delay: 0.3s; }
 @keyframes pulsar { 0%, 80%, 100% { opacity:0.2; transform:scale(0.8);} 40% { opacity:1; transform:scale(1.2);} }
-.area-input { padding:16px; border-top:1px solid #ffffff22; display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+.area-input { padding:16px 16px calc(16px + env(safe-area-inset-bottom)); border-top:1px solid #ffffff22; display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
 .area-input input[type=text] { flex:1; min-width:120px; padding:14px; border-radius:8px; border:1px solid #ffffff33; background:#0d0d0d; color:#f2f2f2; font-size:14px; }
 .area-input button { padding:14px 16px; border-radius:8px; border:none; background:#ffffff; color:#000000; font-weight:bold; cursor:pointer; font-size:13px; }
 .area-input button.secundario { background:#1a1a1a; color:#f2f2f2; border:1px solid #ffffff33; }
@@ -941,7 +964,6 @@ body { display:flex; height:100vh; overflow:hidden; }
   </div>
   <a class="link-inicio" href="/inicio">Tela inicial</a>
   <button class="novo-chat" onclick="novaConversa()">+ Nova conversa</button>
-  <a class="link-rede" href="/rede">JarvisWEB</a>
   <a class="link-suporte" href="/suporte">Suporte</a>
   <div class="historico-lista" id="listaConversas"></div>
   <div class="rodape-sidebar">
@@ -1273,11 +1295,16 @@ PAGINA_REDE = """
 <title>JarvisWEB</title>
 <style>
 """ + ESTILO_COMUM + """
-body { height:100vh; overflow-y:auto; }
-.topo { position:sticky; top:0; background:#000000; padding:14px 16px; border-bottom:1px solid #ffffff22; display:flex; align-items:center; gap:12px; z-index:5; }
-.voltar { color:#ffffff; text-decoration:none; font-size:20px; }
-.titulo-topo { font-weight:bold; letter-spacing:1px; }
-.container { max-width:600px; margin:0 auto; padding:16px; }
+html, body { height:100%; overflow:hidden; background:#000; }
+.topo { position:fixed; top:0; left:0; right:0; background:linear-gradient(#000000cc, transparent); padding:14px 16px; display:flex; align-items:center; gap:12px; z-index:15; pointer-events:none; }
+.topo > * { pointer-events:auto; }
+.voltar { color:#ffffff; text-decoration:none; font-size:20px; text-shadow:0 1px 4px #000; }
+.titulo-topo { font-weight:bold; letter-spacing:1px; text-shadow:0 1px 4px #000; }
+.botao-engrenagem { margin-left:auto; background:#00000066; border:1px solid #ffffff33; color:#fff; width:34px; height:34px; border-radius:50%; display:flex; align-items:center; justify-content:center; cursor:pointer; font-size:16px; }
+.container { height:100%; }
+.feed-tela-cheia { height:100%; overflow-y:scroll; scroll-snap-type:y mandatory; scrollbar-width:none; }
+.feed-tela-cheia::-webkit-scrollbar { display:none; }
+.feed-vazio { height:100%; display:flex; align-items:center; justify-content:center; color:#777; font-size:14px; text-align:center; padding:0 30px; }
 .caixa-postar { background:#0d0d0d; border:1px solid #ffffff22; border-radius:12px; padding:14px; margin-bottom:20px; }
 .caixa-postar textarea { width:100%; background:#000000; border:1px solid #ffffff22; border-radius:8px; color:#f2f2f2; padding:10px; resize:vertical; min-height:60px; }
 .caixa-postar input { width:100%; margin-top:8px; padding:8px; border-radius:6px; border:1px solid #ffffff22; background:#000000; color:#f2f2f2; font-size:12px; }
@@ -1292,29 +1319,37 @@ body { height:100vh; overflow-y:auto; }
 .nav-inferior a, .nav-inferior div.nav-item { display:flex; flex-direction:column; align-items:center; gap:2px; color:#ccc; text-decoration:none; font-size:10px; cursor:pointer; }
 .nav-inferior .nav-mais { width:42px; height:32px; border-radius:10px; background:#ffffff; color:#000; display:flex; align-items:center; justify-content:center; font-size:20px; font-weight:bold; }
 .nav-inferior img.nav-icone { width:22px; height:22px; border-radius:6px; object-fit:cover; }
-.container { padding-bottom:84px; }
-.post { background:#0d0d0d; border:1px solid #ffffff22; border-radius:12px; padding:14px; margin-bottom:16px; }
-.post-cabecalho { display:flex; align-items:center; gap:8px; margin-bottom:8px; font-weight:bold; }
+.post { height:100%; width:100%; scroll-snap-align:start; position:relative; display:flex; align-items:center; justify-content:center; background:#000; overflow:hidden; }
+.post-midia-wrap { width:100%; height:100%; display:flex; align-items:center; justify-content:center; background:#000; }
+.post img.post-imagem, .post video { max-width:100%; max-height:100%; width:auto; height:auto; object-fit:contain; }
+.post-sem-midia { padding:24px; font-size:20px; text-align:center; color:#f2f2f2; white-space:pre-wrap; }
+.post-rodape { position:absolute; left:0; right:78px; bottom:0; padding:16px 14px calc(16px + env(safe-area-inset-bottom)); background:linear-gradient(transparent, #000000cc 70%); }
+.post-cabecalho { display:flex; align-items:center; gap:8px; margin-bottom:6px; font-weight:bold; }
 .post-cabecalho a { color:#f2f2f2; text-decoration:none; display:flex; align-items:center; gap:8px; }
-.post-cabecalho img { width:32px; height:32px; border-radius:50%; object-fit:cover; }
-.post-texto { margin:8px 0; white-space:pre-wrap; }
-.post img.post-imagem, .post video { max-width:100%; border-radius:8px; margin-top:6px; cursor:pointer; }
-.post-acoes { display:flex; gap:16px; margin-top:10px; font-size:13px; }
-.post-acoes span { cursor:pointer; color:#cccccc; }
-.post-acoes span.ativo { color:#ffffff; font-weight:bold; }
-.comentarios { margin-top:10px; border-top:1px solid #ffffff22; padding-top:8px; font-size:13px; }
-.comentario { margin-bottom:6px; }
+.post-cabecalho img { width:34px; height:34px; border-radius:50%; object-fit:cover; border:1px solid #ffffff44; }
+.post-texto { margin:4px 0 0; white-space:pre-wrap; font-size:13px; color:#eee; }
+.acoes-laterais { position:absolute; right:10px; bottom:90px; display:flex; flex-direction:column; align-items:center; gap:20px; z-index:8; }
+.acao-lateral { display:flex; flex-direction:column; align-items:center; gap:3px; cursor:pointer; color:#fff; font-size:11px; text-shadow:0 1px 3px #000; }
+.acao-lateral svg { width:30px; height:30px; filter:drop-shadow(0 1px 3px #000); }
+.acao-lateral.curtido svg path { fill:#ff3b5c; stroke:#ff3b5c; }
+.acao-lateral.salvo svg path { fill:#ffffff; }
+.botao-seguir-lateral { margin-top:2px; background:#ff3b5c; color:#fff; border:none; border-radius:6px; padding:3px 8px; font-size:10px; font-weight:bold; cursor:pointer; }
+.folha-comentarios { display:none; position:fixed; inset:0; background:#00000099; z-index:120; align-items:flex-end; justify-content:center; }
+.folha-comentarios.aberta { display:flex; }
+.folha-comentarios-conteudo { width:100%; max-width:480px; max-height:70vh; background:#0d0d0d; border-radius:16px 16px 0 0; border:1px solid #ffffff22; border-bottom:none; display:flex; flex-direction:column; }
+.folha-comentarios-topo { padding:14px; border-bottom:1px solid #ffffff1a; display:flex; align-items:center; justify-content:space-between; font-weight:bold; }
+.folha-comentarios-topo span { cursor:pointer; color:#888; font-size:20px; }
+.lista-comentarios { flex:1; overflow-y:auto; padding:12px 14px; font-size:13px; }
+.comentario { margin-bottom:10px; }
 .comentario b { color:#ffffff; }
-.caixa-comentar { display:flex; gap:6px; margin-top:6px; }
-.caixa-comentar input { flex:1; padding:8px; border-radius:6px; border:1px solid #ffffff22; background:#000000; color:#f2f2f2; font-size:12px; }
-.caixa-comentar button { padding:8px 12px; border-radius:6px; border:none; background:#1a1a1a; color:#f2f2f2; cursor:pointer; font-size:12px; }
-.painel-admin { background:#0d0d0d; border:1px solid #ffffff33; border-radius:14px; padding:0; margin-bottom:20px; font-size:13px; overflow:hidden; }
-.painel-admin-cabecalho { display:flex; align-items:center; justify-content:space-between; padding:12px 14px; cursor:pointer; }
+.caixa-comentar { display:flex; gap:6px; padding:10px 14px calc(10px + env(safe-area-inset-bottom)); border-top:1px solid #ffffff1a; }
+.caixa-comentar input { flex:1; padding:10px; border-radius:20px; border:1px solid #ffffff22; background:#000000; color:#f2f2f2; font-size:13px; }
+.caixa-comentar button { padding:9px 14px; border-radius:20px; border:none; background:#1a1a1a; color:#f2f2f2; cursor:pointer; font-size:12px; }
+.painel-admin { position:fixed; top:56px; left:10px; right:10px; z-index:60; background:#0d0d0df5; border:1px solid #ffffff33; border-radius:14px; padding:0; font-size:13px; overflow:hidden; display:none; max-height:80vh; }
+.painel-admin.aberto { display:block; }
+.painel-admin-corpo { max-height:70vh; overflow-y:auto; }
+.painel-admin-cabecalho { display:flex; align-items:center; justify-content:space-between; padding:12px 14px; }
 .painel-admin-cabecalho b { font-size:13px; letter-spacing:0.3px; }
-.painel-admin-cabecalho .seta { transition:transform 0.2s ease; color:#888; }
-.painel-admin.recolhido .seta { transform:rotate(-90deg); }
-.painel-admin-corpo { display:flex; flex-direction:column; max-height:2000px; transition:max-height 0.2s ease; }
-.painel-admin.recolhido .painel-admin-corpo { max-height:0; overflow:hidden; }
 .painel-admin-abas { display:flex; gap:4px; padding:0 10px; overflow-x:auto; border-bottom:1px solid #ffffff1a; }
 .painel-admin-abas button { flex-shrink:0; background:none; border:none; color:#888; padding:9px 10px; font-size:12px; cursor:pointer; border-bottom:2px solid transparent; margin:0; }
 .painel-admin-abas button.ativa { color:#ffffff; border-bottom:2px solid #ffffff; font-weight:bold; }
@@ -1333,13 +1368,16 @@ body { height:100vh; overflow-y:auto; }
 .lightbox.aberto { display:flex; }
 .lightbox img, .lightbox video { max-width:92vw; max-height:88vh; border-radius:10px; }
 .fechar-lightbox { position:absolute; top:20px; right:20px; color:#fff; font-size:28px; cursor:pointer; }
-@media (max-width:480px) { .container { padding:10px; } }
 </style></head>
 <body>
-<div class="topo"><a href="/inicio" class="voltar">&#8592;</a><span class="titulo-topo">JarvisWEB</span></div>
+<div class="topo">
+  <a href="/inicio" class="voltar">&#8592;</a>
+  <span class="titulo-topo">JarvisWEB</span>
+  {botao_engrenagem}
+</div>
 <div class="container">
   {painel_admin}
-  <div id="feed"></div>
+  <div class="feed-tela-cheia" id="feed"></div>
 </div>
 <div class="modal-postar" id="modalPostar">
   <div class="modal-postar-conteudo">
@@ -1364,6 +1402,10 @@ body { height:100vh; overflow-y:auto; }
 </div>
 <script>
 const usuarioLogado = "{usuario}";
+const ICONE_CORACAO = '<svg viewBox="0 0 24 24" stroke="#fff" stroke-width="1.6" fill="none"><path d="M12 21s-7.5-4.6-10.1-9.1C.4 8.8 1.7 5 5.4 4.3c2-.4 3.9.5 5 2.1.9-1.6 2.9-2.5 5-2.1 3.7.7 5 4.5 3.5 7.6C19.5 16.4 12 21 12 21z"/></svg>';
+const ICONE_COMENTAR = '<svg viewBox="0 0 24 24" fill="#fff"><path d="M21 11.5a8.4 8.4 0 01-8.9 8.4 9 9 0 01-3.6-.7L3 21l1.8-5.3a8.4 8.4 0 01-.8-3.6A8.4 8.4 0 0112.5 3a8.6 8.6 0 018.5 8.5z"/></svg>';
+const ICONE_SALVAR = '<svg viewBox="0 0 24 24" stroke="#fff" stroke-width="1.6" fill="none"><path d="M6 3h12a1 1 0 011 1v17l-7-4-7 4V4a1 1 0 011-1z"/></svg>';
+let sombraAudioLiberada = false;
 function abrirLightbox(src, tipo, ev) {
     if (ev) ev.stopPropagation();
     const el = document.getElementById("lightboxConteudo");
@@ -1374,41 +1416,64 @@ function fecharLightbox() {
     document.getElementById("lightbox").classList.remove("aberto");
     document.getElementById("lightboxConteudo").innerHTML = "";
 }
+let ultimosPostsCarregados = [];
 async function carregarFeed() {
     const resposta = await fetch("/rede/feed");
     const posts = await resposta.json();
+    ultimosPostsCarregados = posts;
     const div = document.getElementById("feed");
+    if (!posts.length) { div.innerHTML = '<div class="feed-vazio">Ainda nao tem publicacoes. Toque no + para postar algo.</div>'; return; }
     div.innerHTML = "";
     posts.forEach(p => {
         const bloco = document.createElement("div");
         bloco.className = "post";
         const selo = p.verificado ? (p.selo_html || '') : '';
-        let html = '<div class="post-cabecalho"><a href="/perfil/' + p.usuario + '"><img src="' + p.avatar + '">' + p.usuario + selo + (p.tag_html || '') + '</a></div>';
+        let midiaHtml = "";
+        if (p.imagem) midiaHtml = "<div class='post-midia-wrap'><img class='post-imagem' src='" + p.imagem + "' onclick=\\"abrirLightbox('" + p.imagem + "','imagem',event)\\"></div>";
+        else if (p.video) midiaHtml = "<div class='post-midia-wrap'><video controlsList='nodownload noremoteplayback' disablePictureInPicture oncontextmenu='return false' playsinline muted loop preload='metadata' src='" + p.video + "'></video></div>";
+        else midiaHtml = "<div class='post-sem-midia'></div>";
+        let html = midiaHtml;
+        html += '<div class="acoes-laterais">';
+        html += '<div class="acao-lateral ' + (p.curtido ? 'curtido' : '') + '" onclick="curtir(' + p.id + ')">' + ICONE_CORACAO + '<span>' + p.curtidas + '</span></div>';
+        html += '<div class="acao-lateral" onclick="mostrarComentarios(' + p.id + ')">' + ICONE_COMENTAR + '<span>' + p.comentarios.length + '</span></div>';
+        html += '<div class="acao-lateral ' + (p.salvo ? 'salvo' : '') + '" onclick="salvarPost(' + p.id + ')">' + ICONE_SALVAR + '<span>' + (p.salvo ? 'Salvo' : 'Salvar') + '</span></div>';
+        html += '</div>';
+        html += '<div class="post-rodape"><div class="post-cabecalho"><a href="/perfil/' + p.usuario + '"><img src="' + p.avatar + '">' + p.usuario + selo + (p.tag_html || '');
+        if (p.usuario !== usuarioLogado) html += '<button class="botao-seguir-lateral" onclick="event.preventDefault();seguir(\\'' + p.usuario + '\\')">' + (p.seguindo ? 'Seguindo' : 'Seguir') + '</button>';
+        html += '</a></div>';
         if (p.texto) html += '<div class="post-texto"></div>';
-        if (p.imagem) html += "<img class='post-imagem' src='" + p.imagem + "' onclick=\\"abrirLightbox('" + p.imagem + "','imagem',event)\\">";
-        if (p.video) html += "<video controlsList='nodownload noremoteplayback' disablePictureInPicture oncontextmenu='return false' playsinline muted loop preload='metadata' src='" + p.video + "' onclick=\\"abrirLightbox('" + p.video + "','video',event)\\"></video>";
-        html += '<div class="post-acoes">';
-        html += '<span class="' + (p.curtido ? 'ativo' : '') + '" onclick="curtir(' + p.id + ')">Curtir (' + p.curtidas + ')</span>';
-        html += '<span onclick="mostrarComentarios(' + p.id + ')">Comentar (' + p.comentarios.length + ')</span>';
-        html += '<span class="' + (p.salvo ? 'ativo' : '') + '" onclick="salvarPost(' + p.id + ')">' + (p.salvo ? 'Salvo' : 'Salvar') + '</span>';
-        if (p.usuario !== usuarioLogado) {
-            html += '<span class="' + (p.seguindo ? 'ativo' : '') + '" onclick="seguir(\\'' + p.usuario + '\\')">' + (p.seguindo ? 'Seguindo' : 'Seguir') + '</span>';
-        }
-        html += '</div><div class="comentarios" id="coment-' + p.id + '" style="display:none;">';
-        p.comentarios.forEach(c => { html += '<div class="comentario"><b>' + c.usuario + ':</b> </div>'; });
-        html += '<div class="caixa-comentar"><input id="novoComent-' + p.id + '" placeholder="Comentar..."><button onclick="comentar(' + p.id + ')">Enviar</button></div></div>';
+        html += '</div>';
         bloco.innerHTML = html;
         if (p.texto) bloco.querySelector(".post-texto").textContent = p.texto;
-        bloco.querySelectorAll(".comentario").forEach((elemento, i) => { elemento.querySelector("b").nextSibling.textContent = " " + p.comentarios[i].texto; });
+        bloco.dataset.postId = p.id;
         div.appendChild(bloco);
     });
     configurarAutoplayFeed();
 }
-function mostrarComentarios(id) { const el = document.getElementById("coment-" + id); el.style.display = el.style.display === "none" ? "block" : "none"; }
+function abrirFolhaComentarios(id) {
+    const post = ultimosPostsCarregados.find(p => p.id === id);
+    if (!post) return;
+    const lista = document.getElementById("listaComentariosFolha");
+    lista.innerHTML = "";
+    post.comentarios.forEach(c => {
+        const linha = document.createElement("div");
+        linha.className = "comentario";
+        const b = document.createElement("b"); b.textContent = c.usuario + ": ";
+        linha.appendChild(b);
+        linha.appendChild(document.createTextNode(c.texto));
+        lista.appendChild(linha);
+    });
+    if (!post.comentarios.length) lista.innerHTML = '<div style="color:#777;">Nenhum comentario ainda.</div>';
+    document.getElementById("folhaComentarios").dataset.postId = id;
+    document.getElementById("folhaComentarios").classList.add("aberta");
+}
+function fecharFolhaComentarios() { document.getElementById("folhaComentarios").classList.remove("aberta"); }
+function mostrarComentarios(id) { abrirFolhaComentarios(id); }
 function abrirModalPostar() { document.getElementById("modalPostar").classList.add("aberto"); }
 function fecharModalPostar() { document.getElementById("modalPostar").classList.remove("aberto"); }
 // ---------- Rolagem estilo feed de video: quando um video entra na tela ele toca
-// com som; quando sai, para e silencia - so um video toca por vez, sem trombar. ----------
+// (mudo por padrao - o som so liga depois que a pessoa toca na tela uma vez, pra
+// nao "ligar" audio sozinho); quando sai, para. So um video toca por vez. ----------
 let observadorVideos = null;
 function configurarAutoplayFeed() {
     if (observadorVideos) observadorVideos.disconnect();
@@ -1416,15 +1481,23 @@ function configurarAutoplayFeed() {
         entradas.forEach(entrada => {
             const video = entrada.target;
             if (entrada.isIntersecting && entrada.intersectionRatio >= 0.6) {
-                document.querySelectorAll(".post video").forEach(v => { if (v !== video) { v.pause(); v.muted = true; } });
-                video.muted = false;
+                document.querySelectorAll(".post video").forEach(v => { if (v !== video) { v.pause(); } });
+                video.muted = !sombraAudioLiberada;
                 video.play().catch(() => {});
             } else {
                 video.pause();
             }
         });
     }, { threshold: [0, 0.6, 1] });
-    document.querySelectorAll(".post video").forEach(v => observadorVideos.observe(v));
+    document.querySelectorAll(".post video").forEach(v => {
+        v.observe = null;
+        v.addEventListener("click", () => {
+            sombraAudioLiberada = true;
+            v.muted = false;
+            v.play().catch(() => {});
+        });
+        observadorVideos.observe(v);
+    });
 }
 async function publicar() {
     const botao = document.querySelector(".caixa-postar button");
@@ -1526,6 +1599,17 @@ async function enviarConfig(chave, idInput, idResultado, elementoInput) {
     if (dados.ok && dados.url) {
         const previa = document.getElementById("previa" + chave.split("_").map(p => p[0].toUpperCase()+p.slice(1)).join(""));
     }
+}
+async function definirIdAdmin() {
+    const alvo = document.getElementById("idAlvo").value.trim();
+    const novoId = document.getElementById("idNovo").value.trim();
+    const resultado = document.getElementById("resultadoId");
+    if (!alvo || !novoId) { resultado.textContent = "Preencha o email/ID da pessoa e o novo ID."; return; }
+    resultado.textContent = "Salvando...";
+    const resposta = await fetch("/admin/definir_id", { method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({alvo, novo_id: novoId}) });
+    const dados = await resposta.json();
+    resultado.textContent = dados.ok ? (dados.usuario + " agora e #" + dados.id_publico) : (dados.erro || "Erro.");
+    if (dados.ok) carregarFeed();
 }
 async function buscarConversasZap() {
     const frase = document.getElementById("zapBuscaFrase").value.trim();
@@ -1660,7 +1744,7 @@ body { height:100vh; display:flex; flex-direction:column; }
 .msg-s { max-width:75%; padding:10px 14px; border-radius:10px; font-size:14px; }
 .msg-s.eu { align-self:flex-end; background:#1a1a1a; }
 .msg-s.outro { align-self:flex-start; background:#0d0d0d; border:1px solid #ffffff22; }
-.area-input-suporte { padding:14px; border-top:1px solid #ffffff22; display:flex; gap:8px; }
+.area-input-suporte { padding:14px 14px calc(14px + env(safe-area-inset-bottom)); border-top:1px solid #ffffff22; display:flex; gap:8px; }
 .area-input-suporte input { flex:1; padding:12px; border-radius:8px; border:1px solid #ffffff33; background:#0d0d0d; color:#f2f2f2; }
 .area-input-suporte button { padding:12px 16px; border-radius:8px; border:none; background:#ffffff; color:#000; font-weight:bold; cursor:pointer; }
 .painel-admin { margin:12px 16px 0; background:#0d0d0d; border:1px solid #ffffff33; border-radius:12px; padding:14px; font-size:13px; }
@@ -1828,7 +1912,7 @@ body { display:flex; height:100vh; overflow:hidden; }
 .bolha audio { margin-top:4px; }
 .bolha .denunciar { display:block; margin-top:6px; font-size:10px; color:#888; cursor:pointer; text-decoration:underline; }
 .sem-conversa { flex:1; display:flex; align-items:center; justify-content:center; color:#666; }
-.area-input-zap { padding:12px 16px; border-top:1px solid #ffffff22; display:flex; gap:8px; align-items:center; }
+.area-input-zap { padding:12px 16px calc(12px + env(safe-area-inset-bottom)); border-top:1px solid #ffffff22; display:flex; gap:8px; align-items:center; }
 .area-input-zap input[type=text] { flex:1; padding:12px 14px; border-radius:20px; border:1px solid #ffffff33; background:#0d0d0d; color:#f2f2f2; font-size:14px; }
 .area-input-zap button, .area-input-zap label { background:#1a1a1a; border:1px solid #ffffff33; color:#fff; border-radius:50%; width:40px; height:40px; display:flex; align-items:center; justify-content:center; cursor:pointer; font-size:16px; flex-shrink:0; }
 .area-input-zap button.enviar { background:#fff; color:#000; }
@@ -2039,6 +2123,19 @@ const CONFIG_ICE = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
 let pc = null, streamLocal = null, chamadaAtualId = null, souQuemLigou = false, contatoDaChamada = null;
 let indiceCandidatosRecebidos = 0, pollCandidatos = null, pollStatusLigacao = null, pollChamadaEntrando = null;
 
+let mutadoLocal = false;
+function botoesEmChamadaHtml() {
+    return '<button class="botao-chamada-circulo" id="botaoMudo" style="background:#333;color:#fff;" onclick="alternarMudo()">' + (mutadoLocal ? '&#128263;' : '&#127908;') + '</button>' +
+           '<button class="botao-chamada-circulo encerrar" onclick="encerrarChamada(true)">&#128222;</button>';
+}
+function alternarMudo() {
+    if (!streamLocal) return;
+    mutadoLocal = !mutadoLocal;
+    streamLocal.getAudioTracks().forEach(t => t.enabled = !mutadoLocal); // so o MEU audio, nao mexe no do outro lado
+    const botao = document.getElementById("botaoMudo");
+    if (botao) botao.innerHTML = mutadoLocal ? "&#128263;" : "&#127908;";
+}
+
 function abrirModalChamada(nome, avatar, statusTexto, botoesHtml) {
     document.getElementById("nomeChamada").textContent = nome;
     document.getElementById("avatarChamada").src = avatar || (contatos.find(c => c.usuario === nome) || {}).avatar || "";
@@ -2094,7 +2191,7 @@ async function iniciarChamada() {
         if (ds.status === "aceita" && ds.resposta && pc && !pc.currentRemoteDescription) {
             await pc.setRemoteDescription(ds.resposta);
             document.getElementById("statusChamada").textContent = "Em chamada";
-            document.getElementById("botoesChamada").innerHTML = '<button class="botao-chamada-circulo encerrar" onclick="encerrarChamada(true)">&#128222;</button>';
+            document.getElementById("botoesChamada").innerHTML = botoesEmChamadaHtml();
         } else if (ds.status === "recusada") {
             document.getElementById("statusChamada").textContent = "Chamada recusada";
             setTimeout(() => encerrarChamada(false), 1200);
@@ -2125,7 +2222,7 @@ async function aceitarChamada() {
     await pc.setLocalDescription(resposta);
     await fetch("/zap/chamada/responder", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({chamada_id: chamadaAtualId, resposta, aceitar: true}) });
     document.getElementById("statusChamada").textContent = "Em chamada";
-    document.getElementById("botoesChamada").innerHTML = '<button class="botao-chamada-circulo encerrar" onclick="encerrarChamada(true)">&#128222;</button>';
+    document.getElementById("botoesChamada").innerHTML = botoesEmChamadaHtml();
     iniciarPollCandidatos();
 }
 
@@ -2142,7 +2239,7 @@ async function encerrarChamada(avisarServidor) {
     if (streamLocal) { streamLocal.getTracks().forEach(t => t.stop()); streamLocal = null; }
     if (pollCandidatos) { clearInterval(pollCandidatos); pollCandidatos = null; }
     if (pollStatusLigacao) { clearInterval(pollStatusLigacao); pollStatusLigacao = null; }
-    chamadaAtualId = null; contatoDaChamada = null;
+    chamadaAtualId = null; contatoDaChamada = null; mutadoLocal = false;
     fecharModalChamada();
 }
 
@@ -2223,7 +2320,7 @@ body { display:flex; flex-direction:column; height:100vh; }
 .bolha.minha { align-self:flex-end; background:#1f6feb33; border:1px solid #1f6feb55; }
 .bolha.dele { align-self:flex-start; background:#0d0d0d; border:1px solid #ffffff22; }
 .bolha .remetente { font-size:11px; color:#888; margin-bottom:2px; }
-.area-input-zap { padding:12px 16px; border-top:1px solid #ffffff22; display:flex; gap:8px; }
+.area-input-zap { padding:12px 16px calc(12px + env(safe-area-inset-bottom)); border-top:1px solid #ffffff22; display:flex; gap:8px; }
 .area-input-zap input[type=text] { flex:1; padding:12px 14px; border-radius:20px; border:1px solid #ffffff33; background:#0d0d0d; color:#f2f2f2; }
 .area-input-zap button { background:#fff; color:#000; border:none; border-radius:50%; width:40px; height:40px; cursor:pointer; }
 </style></head>
@@ -2348,7 +2445,7 @@ def pagina_login():
         """
     else:
         bloco_google = ""
-    return PAGINA_LOGIN.replace("{bloco_google}", bloco_google)
+    return PAGINA_LOGIN.replace("{bloco_google}", bloco_google).replace("{logo_url}", obter_config("logo_login", "/static/logo.jpg"))
 
 
 @app.route("/", methods=["GET"])
@@ -2438,7 +2535,7 @@ def auth_completar_cadastro():
         id_publico = int(request.form.get("id_publico"))
     except (TypeError, ValueError):
         id_publico = None
-    if id_publico is None or (id_publico == 1 and not eh_dono) or (id_publico != 1 and id_publico <= 10):
+    if id_publico is None or (id_publico == 1 and not eh_dono) or (id_publico != 1 and id_publico <= 11):
         id_publico = 1 if eh_dono else gerar_id_publico(conexao)
     else:
         em_uso = conexao.execute("SELECT 1 FROM usuarios WHERE id_publico = ?", (id_publico,)).fetchone()
@@ -2515,6 +2612,7 @@ def inicio():
     pagina = pagina.replace("{icone_jarvis}", icone_img("icone_jarvis", "J"))
     pagina = pagina.replace("{icone_zap}", icone_img("icone_zap", "Z"))
     pagina = pagina.replace("{icone_suporte}", icone_img("icone_suporte", "S"))
+    pagina = pagina.replace("{icone_app_url}", obter_config("icone_app", AVATAR_PADRAO + "jarvisapp"))
     return pagina
 
 
@@ -2524,6 +2622,107 @@ def heartbeat():
         return jsonify({"ok": False}), 401
     marcar_atividade(session["usuario"])
     return jsonify({"ok": True, "online": contar_online(), "contas": contar_contas()})
+
+
+@app.route("/favicon.ico")
+def favicon():
+    icone = obter_config("icone_app") or obter_config("icone_jarvis") or obter_config("logo_login")
+    if icone:
+        return redirect(icone)
+    return "", 204
+
+
+@app.route("/manifest.json")
+def manifest_json():
+    icone = obter_config("icone_app", AVATAR_PADRAO + "jarvisapp")
+    manifest = {
+        "name": "Jarvis",
+        "short_name": "Jarvis",
+        "start_url": "/inicio",
+        "scope": "/",
+        "display": "standalone",
+        "background_color": "#000000",
+        "theme_color": "#000000",
+        "icons": [
+            {"src": icone, "sizes": "192x192", "type": "image/png"},
+            {"src": icone, "sizes": "512x512", "type": "image/png"},
+        ],
+    }
+    return jsonify(manifest)
+
+
+@app.route("/service-worker.js")
+def service_worker():
+    conteudo = (
+        "self.addEventListener('install', e => self.skipWaiting());\n"
+        "self.addEventListener('activate', e => self.clients.claim());\n"
+        "self.addEventListener('fetch', e => {});\n"
+    )
+    return app.response_class(conteudo, mimetype="application/javascript")
+
+
+PAGINA_BAIXAR = """
+<!DOCTYPE html>
+<html lang="pt-BR"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>Baixar o Jarvis</title>
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#000000">
+<link rel="apple-touch-icon" href="{icone_app_url}">
+<style>
+""" + ESTILO_COMUM + """
+body { min-height:100vh; display:flex; flex-direction:column; align-items:center; justify-content:center; padding:30px; text-align:center; }
+img.icone-grande { width:88px; height:88px; border-radius:22px; margin-bottom:18px; box-shadow:0 0 24px #ffffff22; object-fit:cover; }
+h2 { margin:0 0 8px; }
+p { color:#999; font-size:14px; max-width:320px; line-height:1.5; }
+button.principal { margin-top:20px; padding:14px 26px; border-radius:12px; border:none; background:#ffffff; color:#000; font-weight:bold; cursor:pointer; font-size:15px; }
+.passos { text-align:left; background:#0d0d0d; border:1px solid #ffffff22; border-radius:12px; padding:16px; margin-top:20px; font-size:13px; color:#ccc; max-width:320px; }
+.passos b { color:#fff; }
+.voltar-baixar { margin-top:24px; color:#888; text-decoration:underline; }
+</style></head>
+<body>
+<img class="icone-grande" src="{icone_app_url}">
+<h2>Instalar o Jarvis</h2>
+<p>Instale o Jarvis na tela inicial do seu celular pra abrir como um app, sem precisar do navegador.</p>
+<button class="principal" id="botaoInstalar" style="display:none;" onclick="instalarApp()">Instalar agora</button>
+<div class="passos" id="passosIOS" style="display:none;">
+  <b>No iPhone (Safari):</b><br>
+  1. Toque no botao de compartilhar (o quadrado com a seta pra cima)<br>
+  2. Escolha "Adicionar a Tela de Inicio"<br>
+  3. Toque em "Adicionar"
+</div>
+<div class="passos" id="passosGenerico">
+  <b>Nao apareceu o botao?</b><br>
+  No menu do navegador (tres pontinhos), procure por "Adicionar a tela inicial" ou "Instalar app".
+</div>
+<a class="voltar-baixar" href="/inicio">Voltar</a>
+<script>
+if ('serviceWorker' in navigator) { navigator.serviceWorker.register('/service-worker.js').catch(() => {}); }
+let eventoInstalacao = null;
+window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    eventoInstalacao = e;
+    document.getElementById('botaoInstalar').style.display = 'inline-block';
+});
+async function instalarApp() {
+    if (!eventoInstalacao) return;
+    eventoInstalacao.prompt();
+    await eventoInstalacao.userChoice;
+    eventoInstalacao = null;
+    document.getElementById('botaoInstalar').style.display = 'none';
+}
+const ehIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+if (ehIOS) document.getElementById('passosIOS').style.display = 'block';
+</script>
+</body></html>
+"""
+
+
+@app.route("/baixar")
+def baixar():
+    if not session.get("usuario"):
+        return redirect(url_for("login"))
+    icone = obter_config("icone_app", AVATAR_PADRAO + "jarvisapp")
+    return PAGINA_BAIXAR.replace("{icone_app_url}", icone)
 
 
 @app.route("/painel")
@@ -2617,17 +2816,20 @@ def rede():
     usuario = session["usuario"]
     eh_dev = eh_desenvolvedor(usuario)
     painel_admin_html = ""
+    botao_engrenagem = ""
     if eh_dev:
+        botao_engrenagem = '<span class="botao-engrenagem" onclick="document.getElementById(\'painelAdmin\').classList.toggle(\'aberto\')">&#9881;</span>'
         painel_admin_html = """
-        <div class="painel-admin recolhido" id="painelAdmin">
-          <div class="painel-admin-cabecalho" onclick="document.getElementById('painelAdmin').classList.toggle('recolhido')">
-            <b>Painel do desenvolvedor</b><span class="seta">&#9660;</span>
+        <div class="painel-admin" id="painelAdmin">
+          <div class="painel-admin-cabecalho">
+            <b>Painel do desenvolvedor</b><span class="seta" onclick="document.getElementById('painelAdmin').classList.remove('aberto')" style="cursor:pointer;">&times;</span>
           </div>
           <div class="painel-admin-corpo">
             <div class="painel-admin-abas">
               <button class="ativa" onclick="mudarAbaAdmin('selo', this)">Selo</button>
               <button onclick="mudarAbaAdmin('tags', this)">Tags</button>
               <button onclick="mudarAbaAdmin('icones', this)">Icones</button>
+              <button onclick="mudarAbaAdmin('ids', this)">IDs</button>
               <button onclick="mudarAbaAdmin('zap', this)">JarvisZap</button>
             </div>
 
@@ -2671,8 +2873,27 @@ def rede():
                 <div class="item-icone"><img id="previaIconeJarvisweb" src="{icone_jarvisweb}"><input type="file" accept="image/*" id="arqIconeJarvisweb" style="display:none" onchange="enviarConfig('icone_jarvisweb','arqIconeJarvisweb','resultadoIcones',this)"><button class="acao" style="padding:4px 8px;font-size:10px;" onclick="document.getElementById('arqIconeJarvisweb').click()">JarvisWEB</button></div>
                 <div class="item-icone"><img id="previaIconeZap" src="{icone_zap}"><input type="file" accept="image/*" id="arqIconeZap" style="display:none" onchange="enviarConfig('icone_zap','arqIconeZap','resultadoIcones',this)"><button class="acao" style="padding:4px 8px;font-size:10px;" onclick="document.getElementById('arqIconeZap').click()">JarvisZap</button></div>
                 <div class="item-icone"><img id="previaIconeSuporte" src="{icone_suporte}"><input type="file" accept="image/*" id="arqIconeSuporte" style="display:none" onchange="enviarConfig('icone_suporte','arqIconeSuporte','resultadoIcones',this)"><button class="acao" style="padding:4px 8px;font-size:10px;" onclick="document.getElementById('arqIconeSuporte').click()">Suporte</button></div>
+                <div class="item-icone"><img id="previaIconeApp" src="{icone_app}"><input type="file" accept="image/*" id="arqIconeApp" style="display:none" onchange="enviarConfig('icone_app','arqIconeApp','resultadoIcones',this)"><button class="acao" style="padding:4px 8px;font-size:10px;" onclick="document.getElementById('arqIconeApp').click()">Icone do app (instalar)</button></div>
               </div>
+              <label class="rotulo-campo">Logo da tela de login/splash</label>
+              <div class="linha-admin">
+                <input id="logoArquivo" type="file" accept="image/*">
+                <button class="acao" onclick="enviarConfig('logo_login','logoArquivo','resultadoLogo')">Salvar logo</button>
+              </div>
+              <div class="resultado-admin" id="resultadoLogo"></div>
               <div class="resultado-admin" id="resultadoIcones"></div>
+            </div>
+
+            <div class="painel-admin-secao" id="secaoAdmin-ids">
+              IDs de 2 a 11 sao reservados - so voce pode dar (o 1 e sempre seu).<br>
+              A partir do 12, todo mundo recebe automaticamente em ordem.
+              <label class="rotulo-campo">Definir ID de alguem (email ou ID atual)</label>
+              <div class="linha-admin">
+                <input id="idAlvo" type="text" placeholder="email@exemplo.com ou #ID atual">
+                <input id="idNovo" type="number" placeholder="novo ID (2 a 11 ou qualquer livre)">
+                <button class="acao" onclick="definirIdAdmin()">Definir</button>
+              </div>
+              <div class="resultado-admin" id="resultadoId"></div>
             </div>
 
             <div class="painel-admin-secao" id="secaoAdmin-zap">
@@ -2693,10 +2914,12 @@ def rede():
             .replace("{icone_jarvisweb}", obter_config("icone_jarvisweb", AVATAR_PADRAO + "jarvisweb"))
             .replace("{icone_zap}", obter_config("icone_zap", AVATAR_PADRAO + "jarviszap"))
             .replace("{icone_suporte}", obter_config("icone_suporte", AVATAR_PADRAO + "suporte"))
+            .replace("{icone_app}", obter_config("icone_app", AVATAR_PADRAO + "jarvisapp"))
         )
     linha_usuario = buscar_usuario(usuario)
     avatar_usuario = (linha_usuario["foto_perfil"] if linha_usuario and linha_usuario["foto_perfil"] else AVATAR_PADRAO + usuario)
     pagina = PAGINA_REDE.replace("{usuario}", usuario).replace("{painel_admin}", painel_admin_html)
+    pagina = pagina.replace("{botao_engrenagem}", botao_engrenagem)
     pagina = pagina.replace("{icone_jarvis_nav}", obter_config("icone_jarvis", AVATAR_PADRAO + "jarvis"))
     pagina = pagina.replace("{avatar_usuario_nav}", avatar_usuario)
     return pagina
@@ -2794,8 +3017,8 @@ def perfil_mudar_id():
     eh_dono = linha and linha["email"] and linha["email"].strip().lower() == EMAIL_DONO.lower()
     if novo_id == 1 and not eh_dono:
         return jsonify({"ok": False, "erro": "O ID 1 e reservado."})
-    if novo_id != 1 and novo_id <= 10:
-        return jsonify({"ok": False, "erro": "O ID precisa ser maior que 10."})
+    if novo_id != 1 and novo_id <= 11 and not eh_desenvolvedor(usuario):
+        return jsonify({"ok": False, "erro": "IDs de 2 a 11 sao reservados, so o dono pode dar."})
     conexao = obter_bd()
     em_uso = conexao.execute("SELECT 1 FROM usuarios WHERE id_publico = ? AND usuario != ?", (novo_id, usuario)).fetchone()
     if em_uso:
@@ -2805,6 +3028,33 @@ def perfil_mudar_id():
     conexao.commit()
     conexao.close()
     return jsonify({"ok": True, "id_publico": novo_id})
+
+
+@app.route("/admin/definir_id", methods=["POST"])
+def admin_definir_id():
+    """Painel do dono: define o ID de qualquer pessoa, inclusive os reservados (2 a 11)."""
+    if not eh_desenvolvedor(session.get("usuario")):
+        return jsonify({"ok": False, "erro": "Sem permissao."}), 403
+    dados = request.get_json() or {}
+    alvo_valor = (dados.get("alvo") or "").strip()
+    try:
+        novo_id = int(str(dados.get("novo_id", "")).strip().lstrip("#"))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "erro": "Digite um ID valido."})
+    linha = buscar_usuario_por_email_ou_id(alvo_valor)
+    if not linha:
+        return jsonify({"ok": False, "erro": "Ninguem encontrado com esse email/ID."})
+    if novo_id == 1 and linha["email"].strip().lower() != EMAIL_DONO.lower():
+        return jsonify({"ok": False, "erro": "O ID 1 e exclusivo do dono."})
+    conexao = obter_bd()
+    em_uso = conexao.execute("SELECT 1 FROM usuarios WHERE id_publico = ? AND usuario != ? COLLATE NOCASE", (novo_id, linha["usuario"])).fetchone()
+    if em_uso:
+        conexao.close()
+        return jsonify({"ok": False, "erro": "Esse ID ja esta em uso."})
+    conexao.execute("UPDATE usuarios SET id_publico = ? WHERE usuario = ? COLLATE NOCASE", (novo_id, linha["usuario"]))
+    conexao.commit()
+    conexao.close()
+    return jsonify({"ok": True, "usuario": linha["usuario"], "id_publico": novo_id})
 
 
 @app.route("/auth/sugerir_id")
@@ -3007,7 +3257,7 @@ def admin_config():
         return jsonify({"ok": False, "erro": "Sem permissao."}), 403
     chave = request.form.get("chave", "").strip()
     chaves_permitidas = {
-        "icone_jarvis", "icone_jarvisweb", "icone_suporte", "icone_zap", "selo_verificado_url",
+        "icone_jarvis", "icone_jarvisweb", "icone_suporte", "icone_zap", "selo_verificado_url", "logo_login", "icone_app",
     }
     if chave not in chaves_permitidas:
         return jsonify({"ok": False, "erro": "Configuracao invalida."})
@@ -3504,6 +3754,12 @@ def zap_chamada_pendente():
         return jsonify({"chamada": None}), 401
     usuario = session["usuario"]
     conexao = obter_bd()
+    # ligacoes esquecidas (ex: a pessoa fechou a aba) nao ficam tocando pra sempre
+    conexao.execute(
+        "UPDATE zap_chamadas SET status = 'encerrada' WHERE status = 'chamando' AND criado_em < ?",
+        ((datetime.now() - timedelta(seconds=45)).isoformat(),),
+    )
+    conexao.commit()
     linha = conexao.execute(
         "SELECT * FROM zap_chamadas WHERE quem_recebe = ? COLLATE NOCASE AND status = 'chamando' ORDER BY id DESC LIMIT 1",
         (usuario,),
