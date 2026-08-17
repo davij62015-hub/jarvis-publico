@@ -16,6 +16,7 @@ import base64
 import secrets
 import smtplib
 import ssl
+import threading
 from email.mime.text import MIMEText
 from datetime import datetime, timedelta
 from flask import Flask, request, jsonify, session, redirect, url_for, send_file
@@ -201,9 +202,14 @@ def iniciar_bd():
     """)
     conexao.execute("""
         CREATE TABLE IF NOT EXISTS zap_grupo_membros (
-            grupo_id INTEGER NOT NULL, usuario TEXT NOT NULL, PRIMARY KEY (grupo_id, usuario)
+            grupo_id INTEGER NOT NULL, usuario TEXT NOT NULL, admin INTEGER DEFAULT 0,
+            PRIMARY KEY (grupo_id, usuario)
         )
     """)
+    try:
+        conexao.execute("ALTER TABLE zap_grupo_membros ADD COLUMN admin INTEGER DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
     conexao.execute("""
         CREATE TABLE IF NOT EXISTS zap_grupo_mensagens (
             id INTEGER PRIMARY KEY AUTOINCREMENT, grupo_id INTEGER NOT NULL,
@@ -341,13 +347,21 @@ def enviar_email_codigo(email, codigo):
         mensagem["From"] = SMTP_REMETENTE
         mensagem["To"] = email
         contexto = ssl.create_default_context()
-        with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, context=contexto) as servidor:
+        # timeout curto: se o provedor de email estiver lento/travado, falha rapido
+        # em vez de deixar a pessoa esperando o codigo por muito tempo na tela de login.
+        with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, context=contexto, timeout=10) as servidor:
             servidor.login(SMTP_USUARIO, SMTP_SENHA)
             servidor.sendmail(SMTP_REMETENTE, [email], mensagem.as_string())
         return True
     except Exception as erro:
         print(f"[JARVIS] falha ao enviar email para {email}: {erro}")
         return False
+
+
+def enviar_email_codigo_async(email, codigo):
+    """Dispara o envio do email em segundo plano, para a rota responder na hora
+    e o codigo cair mais rapido na tela (sem esperar o handshake SMTP inteiro)."""
+    threading.Thread(target=enviar_email_codigo, args=(email, codigo), daemon=True).start()
 
 
 def criar_usuario(usuario, email, foto_perfil=None, banner=None, bio=None, data_nascimento=None, id_publico=None):
@@ -3594,6 +3608,16 @@ html, body { height:100%; overflow:hidden; background:#000; }
   <span class="fechar-lightbox">&times;</span>
   <div id="lightboxConteudo"></div>
 </div>
+<div class="folha-comentarios" id="folhaComentarios" onclick="fecharFolhaComentarios()">
+  <div class="folha-comentarios-conteudo" onclick="event.stopPropagation()">
+    <div class="folha-comentarios-topo"><b>Comentarios</b><span onclick="fecharFolhaComentarios()">&times;</span></div>
+    <div class="lista-comentarios" id="listaComentariosFolha"></div>
+    <div class="caixa-comentar">
+      <input type="text" id="campoNovoComentario" placeholder="Adicione um comentario..." onkeydown="if(event.key==='Enter'){enviarComentario();}">
+      <button onclick="enviarComentario()">Enviar</button>
+    </div>
+  </div>
+</div>
 <script>
 const usuarioLogado = "{usuario}";
 const ICONE_CORACAO = '<svg viewBox="0 0 24 24" stroke="#fff" stroke-width="1.6" fill="none"><path d="M12 21s-7.5-4.6-10.1-9.1C.4 8.8 1.7 5 5.4 4.3c2-.4 3.9.5 5 2.1.9-1.6 2.9-2.5 5-2.1 3.7.7 5 4.5 3.5 7.6C19.5 16.4 12 21 12 21z"/></svg>';
@@ -3624,7 +3648,7 @@ async function carregarFeed() {
         const selo = p.verificado ? (p.selo_html || '') : '';
         let midiaHtml = "";
         if (p.imagem) midiaHtml = "<div class='post-midia-wrap'><img class='post-imagem' src='" + p.imagem + "' onclick=\\"abrirLightbox('" + p.imagem + "','imagem',event)\\"></div>";
-        else if (p.video) midiaHtml = "<div class='post-midia-wrap'><video controlsList='nodownload noremoteplayback' disablePictureInPicture oncontextmenu='return false' playsinline muted loop preload='metadata' src='" + p.video + "'></video></div>";
+        else if (p.video) midiaHtml = "<div class='post-midia-wrap'><video controlsList='nodownload noremoteplayback' disablePictureInPicture oncontextmenu='return false' playsinline muted loop preload='auto' src='" + p.video + "'></video></div>";
         else midiaHtml = "<div class='post-sem-midia'></div>";
         let html = midiaHtml;
         html += '<div class="acoes-laterais">';
@@ -3731,12 +3755,26 @@ async function publicar() {
     }
 }
 async function curtir(id) { await fetch("/rede/curtir", { method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({post_id: id}) }); carregarFeed(); }
-async function comentar(id) {
-    const campo = document.getElementById("novoComent-" + id);
+async function enviarComentario() {
+    const folha = document.getElementById("folhaComentarios");
+    const id = parseInt(folha.dataset.postId, 10);
+    const campo = document.getElementById("campoNovoComentario");
     const texto = campo.value.trim();
-    if (!texto) return;
-    await fetch("/rede/comentar", { method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({post_id: id, texto: texto}) });
-    campo.value = ""; carregarFeed();
+    if (!texto || !id) return;
+    campo.disabled = true;
+    try {
+        const resposta = await fetch("/rede/comentar", { method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({post_id: id, texto: texto}) });
+        const dados = await resposta.json().catch(() => ({}));
+        if (!dados.ok) { alert(dados.erro || "Nao consegui enviar o comentario."); return; }
+        campo.value = "";
+        await carregarFeed();
+        abrirFolhaComentarios(id);
+    } catch (erro) {
+        alert("Falha de conexao ao comentar. Verifica sua internet e tenta de novo.");
+    } finally {
+        campo.disabled = false;
+        campo.focus();
+    }
 }
 async function seguir(alvo) { await fetch("/rede/seguir", { method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({alvo: alvo}) }); carregarFeed(); }
 async function salvarPost(id) { await fetch("/rede/salvar", { method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({post_id: id}) }); carregarFeed(); }
@@ -4540,17 +4578,124 @@ body { display:flex; flex-direction:column; height:100vh; }
 .area-input-zap { padding:12px 16px calc(12px + env(safe-area-inset-bottom)); border-top:1px solid #ffffff22; display:flex; gap:8px; }
 .area-input-zap input[type=text] { flex:1; padding:12px 14px; border-radius:20px; border:1px solid #ffffff33; background:#0d0d0d; color:#f2f2f2; }
 .area-input-zap button { background:#fff; color:#000; border:none; border-radius:50%; width:40px; height:40px; cursor:pointer; }
+.botao-info-grupo { margin-left:auto; background:none; border:none; color:#fff; font-size:18px; cursor:pointer; }
+.folha-grupo { display:none; position:fixed; inset:0; background:#00000099; z-index:120; align-items:flex-end; justify-content:center; }
+.folha-grupo.aberta { display:flex; }
+.folha-grupo-conteudo { width:100%; max-width:480px; max-height:82vh; background:#0d0d0d; border-radius:16px 16px 0 0; border:1px solid #ffffff22; border-bottom:none; display:flex; flex-direction:column; overflow-y:auto; padding:16px; }
+.folha-grupo-topo { display:flex; align-items:center; justify-content:space-between; font-weight:bold; margin-bottom:12px; }
+.folha-grupo-topo span { cursor:pointer; color:#888; font-size:20px; }
+.info-grupo-foto { display:flex; flex-direction:column; align-items:center; gap:8px; margin-bottom:14px; }
+.info-grupo-foto img { width:76px; height:76px; border-radius:50%; object-fit:cover; background:#1a1a1a; }
+.info-grupo-foto label { font-size:12px; color:#888; cursor:pointer; text-decoration:underline; }
+.info-grupo-nome { display:flex; gap:8px; margin-bottom:16px; }
+.info-grupo-nome input { flex:1; padding:10px; border-radius:8px; border:1px solid #ffffff22; background:#000; color:#f2f2f2; }
+.info-grupo-nome button { padding:10px 14px; border-radius:8px; border:none; background:#fff; color:#000; font-weight:bold; cursor:pointer; }
+.lista-membros-grupo { font-size:13px; }
+.linha-membro-grupo { display:flex; align-items:center; gap:8px; padding:8px 0; border-bottom:1px solid #ffffff14; }
+.linha-membro-grupo img { width:30px; height:30px; border-radius:50%; object-fit:cover; background:#1a1a1a; }
+.linha-membro-grupo .nome-membro { flex:1; }
+.linha-membro-grupo .tag-admin-membro { font-size:10px; color:#5be6ff; margin-left:6px; }
+.linha-membro-grupo button { background:#1a1a1a; border:1px solid #ffffff22; color:#f2f2f2; font-size:11px; padding:5px 8px; border-radius:6px; cursor:pointer; margin-left:4px; }
+.adicionar-membro-grupo { display:flex; gap:8px; margin:12px 0; }
+.adicionar-membro-grupo input { flex:1; padding:9px; border-radius:8px; border:1px solid #ffffff22; background:#000; color:#f2f2f2; font-size:13px; }
+.adicionar-membro-grupo button { padding:9px 12px; border-radius:8px; border:none; background:#fff; color:#000; font-weight:bold; cursor:pointer; font-size:12px; }
+.botao-sair-grupo { margin-top:14px; width:100%; padding:11px; border-radius:8px; border:1px solid #ff3b5c55; background:none; color:#ff3b5c; font-weight:bold; cursor:pointer; }
 </style></head>
 <body>
-<div class="topo-chat"><a href="/zap/grupos">&#8592;</a><b>{nome_grupo}</b>{selo_dev_grupo}</div>
+<div class="topo-chat"><a href="/zap/grupos">&#8592;</a><b>{nome_grupo}</b>{selo_dev_grupo}<button class="botao-info-grupo" onclick="abrirInfoGrupo()">&#9881;</button></div>
 <div class="msgs-zap" id="msgsGrupo"></div>
 <div class="area-input-zap">
   <input type="text" id="campoGrupo" placeholder="Mensagem" onkeydown="if(event.key==='Enter')enviarMsgGrupo()">
   <button onclick="enviarMsgGrupo()">&#10148;</button>
 </div>
+<div class="folha-grupo" id="folhaGrupo" onclick="fecharInfoGrupo()">
+  <div class="folha-grupo-conteudo" onclick="event.stopPropagation()">
+    <div class="folha-grupo-topo"><b>Informacoes do grupo</b><span onclick="fecharInfoGrupo()">&times;</span></div>
+    <div class="info-grupo-foto">
+      <img id="fotoGrupoAtual" src="">
+      <label id="rotuloFotoGrupo" style="display:none;">Trocar foto<input type="file" id="arquivoFotoGrupo" accept="image/*" style="display:none;" onchange="salvarInfoGrupo()"></label>
+    </div>
+    <div class="info-grupo-nome">
+      <input type="text" id="nomeGrupoInput" placeholder="Nome do grupo">
+      <button id="botaoSalvarNomeGrupo" style="display:none;" onclick="salvarInfoGrupo()">Salvar</button>
+    </div>
+    <div class="adicionar-membro-grupo" id="blocoAdicionarMembro" style="display:none;">
+      <input type="text" id="campoAdicionarMembro" placeholder="Apelido do contato">
+      <button onclick="adicionarMembroGrupo()">Adicionar</button>
+    </div>
+    <div class="lista-membros-grupo" id="listaMembrosGrupo"></div>
+    <button class="botao-sair-grupo" onclick="sairDoGrupo()">Sair do grupo</button>
+  </div>
+</div>
 <script>
 const grupoId = {grupo_id};
+let souAdminDoGrupo = false;
 function escaparHtml(t) { const d = document.createElement("div"); d.textContent = t; return d.innerHTML; }
+async function abrirInfoGrupo() {
+    document.getElementById("folhaGrupo").classList.add("aberta");
+    const r = await fetch("/zap/grupo/" + grupoId + "/info");
+    const d = await r.json();
+    if (!d.ok) { alert(d.erro || "Nao foi possivel carregar as informacoes do grupo."); return; }
+    souAdminDoGrupo = d.sou_admin;
+    document.getElementById("fotoGrupoAtual").src = d.foto || "";
+    document.getElementById("nomeGrupoInput").value = d.nome;
+    document.getElementById("nomeGrupoInput").disabled = !souAdminDoGrupo;
+    document.getElementById("botaoSalvarNomeGrupo").style.display = souAdminDoGrupo ? "" : "none";
+    document.getElementById("rotuloFotoGrupo").style.display = souAdminDoGrupo ? "" : "none";
+    document.getElementById("blocoAdicionarMembro").style.display = souAdminDoGrupo ? "flex" : "none";
+    const lista = document.getElementById("listaMembrosGrupo");
+    lista.innerHTML = d.membros.map(m => {
+        let botoes = "";
+        if (souAdminDoGrupo) {
+            botoes += `<button onclick="promoverMembroGrupo('${m.usuario}')">${m.admin ? "Remover admin" : "Tornar admin"}</button>`;
+            botoes += `<button onclick="removerMembroGrupo('${m.usuario}')">Remover</button>`;
+        }
+        return `<div class="linha-membro-grupo"><img src="${m.foto || ''}"><span class="nome-membro">${escaparHtml(m.usuario)}${m.admin ? '<span class="tag-admin-membro">ADMIN</span>' : ''}</span>${botoes}</div>`;
+    }).join("");
+}
+function fecharInfoGrupo() { document.getElementById("folhaGrupo").classList.remove("aberta"); }
+async function salvarInfoGrupo() {
+    const form = new FormData();
+    const nome = document.getElementById("nomeGrupoInput").value.trim();
+    const arquivo = document.getElementById("arquivoFotoGrupo").files[0];
+    if (nome) form.append("nome", nome);
+    if (arquivo) form.append("foto", arquivo);
+    const r = await fetch("/zap/grupo/" + grupoId + "/editar", { method: "POST", body: form });
+    const d = await r.json();
+    if (!d.ok) { alert(d.erro || "Nao foi possivel salvar."); return; }
+    document.querySelector(".topo-chat b").textContent = d.nome;
+    abrirInfoGrupo();
+}
+async function adicionarMembroGrupo() {
+    const campo = document.getElementById("campoAdicionarMembro");
+    const usuario = campo.value.trim();
+    if (!usuario) return;
+    const r = await fetch("/zap/grupo/" + grupoId + "/membro/adicionar", { method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({usuario}) });
+    const d = await r.json();
+    if (!d.ok) { alert(d.erro || "Nao foi possivel adicionar."); return; }
+    campo.value = "";
+    abrirInfoGrupo();
+}
+async function removerMembroGrupo(usuario) {
+    if (!confirm("Remover " + usuario + " do grupo?")) return;
+    const r = await fetch("/zap/grupo/" + grupoId + "/membro/remover", { method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({usuario}) });
+    const d = await r.json();
+    if (!d.ok) { alert(d.erro || "Nao foi possivel remover."); return; }
+    abrirInfoGrupo();
+}
+async function promoverMembroGrupo(usuario) {
+    const r = await fetch("/zap/grupo/" + grupoId + "/membro/promover", { method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({usuario}) });
+    const d = await r.json();
+    if (!d.ok) { alert(d.erro || "Nao foi possivel alterar o admin."); return; }
+    abrirInfoGrupo();
+}
+async function sairDoGrupo() {
+    if (!confirm("Tem certeza que quer sair deste grupo?")) return;
+    const r = await fetch("/zap/grupo/" + grupoId + "/sair", { method: "POST" });
+    const d = await r.json();
+    if (!d.ok) { alert(d.erro || "Nao foi possivel sair do grupo."); return; }
+    window.location.href = "/zap/grupos";
+}
 async function carregarMsgsGrupo() {
     const r = await fetch("/zap/grupo/" + grupoId + "/mensagens");
     const d = await r.json();
@@ -4687,15 +4832,15 @@ def auth_enviar_codigo():
     )
     conexao.commit()
     conexao.close()
-    resultado = enviar_email_codigo(email, codigo)
-    if resultado is False:
-        return jsonify({"ok": False, "erro": "Nao foi possivel enviar o codigo. Tente novamente."})
-    resposta = {"ok": True}
-    if resultado == "sem_smtp":
-        # Servidor sem SMTP configurado: manda o codigo junto da resposta para
-        # a pessoa nao ficar travada na tela de login.
-        resposta["codigo_teste"] = codigo
-    return jsonify(resposta)
+    if not (SMTP_HOST and SMTP_USUARIO and SMTP_SENHA):
+        # SMTP nao configurado: nem tenta mandar, ja responde com o codigo de teste
+        # na hora para a pessoa nao ficar travada na tela de login.
+        print(f"[JARVIS] (SMTP nao configurado) codigo para {email}: {codigo}")
+        return jsonify({"ok": True, "codigo_teste": codigo})
+    # Dispara o envio em segundo plano: a rota responde na hora (sem esperar o
+    # handshake SMTP inteiro), entao o codigo cai mais rapido do lado da pessoa.
+    enviar_email_codigo_async(email, codigo)
+    return jsonify({"ok": True})
 
 
 @app.route("/auth/verificar_codigo", methods=["POST"])
@@ -4816,7 +4961,8 @@ def carregando():
         conexao.execute("UPDATE usuarios SET viu_boas_vindas = 1 WHERE usuario = ? COLLATE NOCASE", (usuario,))
         conexao.commit()
         conexao.close()
-        return PAGINA_BOAS_VINDAS.replace("{nome}", usuario).replace("{FUNDO_BOAS_VINDAS_B64}", _FUNDO_BOAS_VINDAS_B64)
+    # A tela cinematografica de boas-vindas foi trocada pela tela de carregamento
+    # preta padrao (mais leve e consistente) tambem na primeira vez que a pessoa entra.
     return PAGINA_CARREGANDO
 
 
@@ -6166,7 +6312,7 @@ def zap_grupos_criar():
         (nome, usuario, datetime.now().isoformat()),
     )
     grupo_id = cursor.lastrowid
-    conexao.execute("INSERT OR IGNORE INTO zap_grupo_membros (grupo_id, usuario) VALUES (?, ?)", (grupo_id, usuario))
+    conexao.execute("INSERT OR IGNORE INTO zap_grupo_membros (grupo_id, usuario, admin) VALUES (?, ?, 1)", (grupo_id, usuario))
     for membro in membros:
         m = buscar_usuario(str(membro).strip())
         if m:
@@ -6183,6 +6329,151 @@ def _membro_do_grupo(grupo_id, usuario):
     ).fetchone()
     conexao.close()
     return linha is not None
+
+
+def _admin_do_grupo(grupo_id, usuario):
+    conexao = obter_bd()
+    linha = conexao.execute(
+        "SELECT admin FROM zap_grupo_membros WHERE grupo_id = ? AND usuario = ? COLLATE NOCASE", (grupo_id, usuario)
+    ).fetchone()
+    conexao.close()
+    return bool(linha and linha["admin"])
+
+
+@app.route("/zap/grupo/<int:grupo_id>/info")
+def zap_grupo_info(grupo_id):
+    if not session.get("usuario"):
+        return jsonify({"ok": False}), 401
+    usuario = session["usuario"]
+    if not _membro_do_grupo(grupo_id, usuario):
+        return jsonify({"ok": False, "erro": "Voce nao faz parte deste grupo."}), 403
+    conexao = obter_bd()
+    grupo = conexao.execute("SELECT * FROM zap_grupos WHERE id = ?", (grupo_id,)).fetchone()
+    if not grupo:
+        conexao.close()
+        return jsonify({"ok": False, "erro": "Grupo nao encontrado."}), 404
+    membros = conexao.execute(
+        """SELECT m.usuario, m.admin, u.foto_perfil FROM zap_grupo_membros m
+           LEFT JOIN usuarios u ON u.usuario = m.usuario COLLATE NOCASE
+           WHERE m.grupo_id = ? ORDER BY m.admin DESC, m.usuario ASC""",
+        (grupo_id,),
+    ).fetchall()
+    conexao.close()
+    return jsonify({
+        "ok": True, "nome": grupo["nome"], "foto": grupo["foto"], "verificado": bool(grupo["verificado"]),
+        "sou_admin": _admin_do_grupo(grupo_id, usuario),
+        "membros": [{"usuario": m["usuario"], "admin": bool(m["admin"]), "foto": m["foto_perfil"]} for m in membros],
+    })
+
+
+@app.route("/zap/grupo/<int:grupo_id>/editar", methods=["POST"])
+def zap_grupo_editar(grupo_id):
+    """Edita nome e/ou foto do grupo. So um admin do grupo pode fazer isso."""
+    if not session.get("usuario"):
+        return jsonify({"ok": False}), 401
+    usuario = session["usuario"]
+    if not _admin_do_grupo(grupo_id, usuario):
+        return jsonify({"ok": False, "erro": "So um admin do grupo pode editar."}), 403
+    nome = (request.form.get("nome") or "").strip()
+    foto = salvar_imagem(request.files.get("foto"))
+    conexao = obter_bd()
+    if nome:
+        conexao.execute("UPDATE zap_grupos SET nome = ? WHERE id = ?", (nome, grupo_id))
+    if foto:
+        conexao.execute("UPDATE zap_grupos SET foto = ? WHERE id = ?", (foto, grupo_id))
+    conexao.commit()
+    grupo = conexao.execute("SELECT nome, foto FROM zap_grupos WHERE id = ?", (grupo_id,)).fetchone()
+    conexao.close()
+    return jsonify({"ok": True, "nome": grupo["nome"], "foto": grupo["foto"]})
+
+
+@app.route("/zap/grupo/<int:grupo_id>/membro/adicionar", methods=["POST"])
+def zap_grupo_membro_adicionar(grupo_id):
+    if not session.get("usuario"):
+        return jsonify({"ok": False}), 401
+    usuario = session["usuario"]
+    if not _admin_do_grupo(grupo_id, usuario):
+        return jsonify({"ok": False, "erro": "So um admin do grupo pode adicionar membros."}), 403
+    dados = request.get_json() or {}
+    alvo = buscar_usuario((dados.get("usuario") or "").strip())
+    if not alvo:
+        return jsonify({"ok": False, "erro": "Usuario nao encontrado."})
+    conexao = obter_bd()
+    conexao.execute("INSERT OR IGNORE INTO zap_grupo_membros (grupo_id, usuario, admin) VALUES (?, ?, 0)", (grupo_id, alvo["usuario"]))
+    conexao.commit()
+    conexao.close()
+    return jsonify({"ok": True})
+
+
+@app.route("/zap/grupo/<int:grupo_id>/membro/remover", methods=["POST"])
+def zap_grupo_membro_remover(grupo_id):
+    if not session.get("usuario"):
+        return jsonify({"ok": False}), 401
+    usuario = session["usuario"]
+    if not _admin_do_grupo(grupo_id, usuario):
+        return jsonify({"ok": False, "erro": "So um admin do grupo pode remover membros."}), 403
+    dados = request.get_json() or {}
+    alvo = (dados.get("usuario") or "").strip()
+    if alvo.lower() == usuario.lower():
+        return jsonify({"ok": False, "erro": "Use a opcao de sair do grupo para se remover."})
+    conexao = obter_bd()
+    conexao.execute("DELETE FROM zap_grupo_membros WHERE grupo_id = ? AND usuario = ? COLLATE NOCASE", (grupo_id, alvo))
+    conexao.commit()
+    conexao.close()
+    return jsonify({"ok": True})
+
+
+@app.route("/zap/grupo/<int:grupo_id>/membro/promover", methods=["POST"])
+def zap_grupo_membro_promover(grupo_id):
+    """Torna um membro admin, ou tira o admin dele (alterna). So um admin pode fazer isso."""
+    if not session.get("usuario"):
+        return jsonify({"ok": False}), 401
+    usuario = session["usuario"]
+    if not _admin_do_grupo(grupo_id, usuario):
+        return jsonify({"ok": False, "erro": "So um admin do grupo pode promover/rebaixar membros."}), 403
+    dados = request.get_json() or {}
+    alvo = (dados.get("usuario") or "").strip()
+    conexao = obter_bd()
+    linha = conexao.execute(
+        "SELECT admin FROM zap_grupo_membros WHERE grupo_id = ? AND usuario = ? COLLATE NOCASE", (grupo_id, alvo)
+    ).fetchone()
+    if not linha:
+        conexao.close()
+        return jsonify({"ok": False, "erro": "Essa pessoa nao esta no grupo."})
+    novo_estado = 0 if linha["admin"] else 1
+    if linha["admin"] and novo_estado == 0:
+        qtd_admins = conexao.execute("SELECT COUNT(*) AS n FROM zap_grupo_membros WHERE grupo_id = ? AND admin = 1", (grupo_id,)).fetchone()["n"]
+        if qtd_admins <= 1:
+            conexao.close()
+            return jsonify({"ok": False, "erro": "O grupo precisa ter pelo menos um admin."})
+    conexao.execute("UPDATE zap_grupo_membros SET admin = ? WHERE grupo_id = ? AND usuario = ? COLLATE NOCASE", (novo_estado, grupo_id, alvo))
+    conexao.commit()
+    conexao.close()
+    return jsonify({"ok": True, "admin": bool(novo_estado)})
+
+
+@app.route("/zap/grupo/<int:grupo_id>/sair", methods=["POST"])
+def zap_grupo_sair(grupo_id):
+    if not session.get("usuario"):
+        return jsonify({"ok": False}), 401
+    usuario = session["usuario"]
+    conexao = obter_bd()
+    linha = conexao.execute(
+        "SELECT admin FROM zap_grupo_membros WHERE grupo_id = ? AND usuario = ? COLLATE NOCASE", (grupo_id, usuario)
+    ).fetchone()
+    if not linha:
+        conexao.close()
+        return jsonify({"ok": False, "erro": "Voce nao faz parte deste grupo."})
+    if linha["admin"]:
+        qtd_admins = conexao.execute("SELECT COUNT(*) AS n FROM zap_grupo_membros WHERE grupo_id = ? AND admin = 1", (grupo_id,)).fetchone()["n"]
+        qtd_membros = conexao.execute("SELECT COUNT(*) AS n FROM zap_grupo_membros WHERE grupo_id = ?", (grupo_id,)).fetchone()["n"]
+        if qtd_admins <= 1 and qtd_membros > 1:
+            conexao.close()
+            return jsonify({"ok": False, "erro": "Torne outra pessoa admin antes de sair, o grupo precisa de pelo menos um."})
+    conexao.execute("DELETE FROM zap_grupo_membros WHERE grupo_id = ? AND usuario = ? COLLATE NOCASE", (grupo_id, usuario))
+    conexao.commit()
+    conexao.close()
+    return jsonify({"ok": True})
 
 
 @app.route("/zap/grupo/<int:grupo_id>")
