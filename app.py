@@ -3566,12 +3566,12 @@ html, body { height:100%; overflow:hidden; background:#000; }
 .post-midia-wrap { width:100%; height:100%; display:flex; align-items:center; justify-content:center; background:#000; }
 .post img.post-imagem, .post video { max-width:100%; max-height:100%; width:auto; height:auto; object-fit:contain; }
 .post-sem-midia { padding:24px; font-size:20px; text-align:center; color:#f2f2f2; white-space:pre-wrap; }
-.post-rodape { position:absolute; left:0; right:78px; bottom:0; padding:16px 14px calc(16px + env(safe-area-inset-bottom)); background:linear-gradient(transparent, #000000cc 70%); }
+.post-rodape { position:absolute; left:0; right:78px; bottom:0; padding:16px 14px calc(70px + env(safe-area-inset-bottom)); background:linear-gradient(transparent, #000000cc 70%); }
 .post-cabecalho { display:flex; align-items:center; gap:8px; margin-bottom:6px; font-weight:bold; }
 .post-cabecalho a { color:#f2f2f2; text-decoration:none; display:flex; align-items:center; gap:8px; }
 .post-cabecalho img { width:34px; height:34px; border-radius:50%; object-fit:cover; border:1px solid #ffffff44; }
 .post-texto { margin:4px 0 0; white-space:pre-wrap; font-size:13px; color:#eee; }
-.acoes-laterais { position:absolute; right:10px; bottom:90px; display:flex; flex-direction:column; align-items:center; gap:20px; z-index:8; }
+.acoes-laterais { position:absolute; right:10px; bottom:158px; display:flex; flex-direction:column; align-items:center; gap:20px; z-index:8; }
 .acao-lateral { display:flex; flex-direction:column; align-items:center; gap:3px; cursor:pointer; color:#fff; font-size:11px; text-shadow:0 1px 3px #000; }
 .acao-lateral svg { width:30px; height:30px; filter:drop-shadow(0 1px 3px #000); }
 .acao-lateral.curtido svg path { fill:#ff3b5c; stroke:#ff3b5c; }
@@ -4565,11 +4565,29 @@ function liberarMidiaChamada() {
 
 function iniciarPollCandidatos() {
     indiceCandidatosRecebidos = 0;
+    // Candidatos ICE podem chegar do outro lado antes da nossa descricao remota
+    // estar pronta (setRemoteDescription so acontece quando a resposta chega).
+    // Tentar adicionar um candidato antes disso lanca erro e, se descartarmos
+    // esse candidato, a chamada as vezes conecta so em uma direcao (ou nao
+    // conecta) - por isso guardamos numa fila e tentamos de novo depois.
+    let filaCandidatosPendentes = [];
+    async function tentarAdicionar(candidato) {
+        if (pc && pc.remoteDescription && pc.remoteDescription.type) {
+            try { await pc.addIceCandidate(candidato); } catch (e) {}
+        } else {
+            filaCandidatosPendentes.push(candidato);
+        }
+    }
     pollCandidatos = setInterval(async () => {
         if (!chamadaAtualId || !pc) return;
+        if (pc.remoteDescription && pc.remoteDescription.type && filaCandidatosPendentes.length) {
+            const pendentes = filaCandidatosPendentes;
+            filaCandidatosPendentes = [];
+            for (const c of pendentes) { try { await pc.addIceCandidate(c); } catch (e) {} }
+        }
         const r = await fetch("/zap/chamada/candidatos/" + chamadaAtualId + "?desde=" + indiceCandidatosRecebidos);
         const d = await r.json();
-        for (const c of d.candidatos) { try { await pc.addIceCandidate(c); } catch (e) {} }
+        for (const c of d.candidatos) { await tentarAdicionar(c); }
         indiceCandidatosRecebidos += d.candidatos.length;
         if (d.status === "encerrada" || d.status === "recusada") encerrarChamada(false);
     }, 1500);
