@@ -82,6 +82,30 @@ CAMINHO_BD = os.environ.get("CAMINHO_BD", "jarvis.db")
 CONTA_DESENVOLVEDOR = "SAMUCA"
 PIN_VERIFICACAO = "9090"
 GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "")
+
+# ---------- Servidores ICE para as chamadas de audio/video do JarvisZap ----------
+# So com STUN, muita gente atras de NAT "fechado" (comum em dados moveis/4G e em
+# algumas redes de empresa) NUNCA consegue trocar midia com a outra ponta - a
+# chamada conecta mas video/audio remoto nunca chega. Um servidor TURN resolve
+# isso retransmitindo a midia. Configure TURN_URL / TURN_USUARIO / TURN_SENHA nas
+# variaveis de ambiente (por exemplo com um servico como metered.ca, Twilio ou um
+# coturn proprio) para deixar as chamadas confiaveis em qualquer rede.
+TURN_URL = os.environ.get("TURN_URL", "")
+TURN_USUARIO = os.environ.get("TURN_USUARIO", "")
+TURN_SENHA = os.environ.get("TURN_SENHA", "")
+_ICE_SERVERS = [
+    {"urls": "stun:stun.l.google.com:19302"},
+    {"urls": "stun:stun1.l.google.com:19302"},
+    {"urls": "stun:stun.cloudflare.com:3478"},
+]
+if TURN_URL:
+    _entrada_turn = {"urls": TURN_URL}
+    if TURN_USUARIO:
+        _entrada_turn["username"] = TURN_USUARIO
+    if TURN_SENHA:
+        _entrada_turn["credential"] = TURN_SENHA
+    _ICE_SERVERS.append(_entrada_turn)
+ICE_SERVERS_JSON = json.dumps(_ICE_SERVERS)
 PASTA_UPLOADS = os.path.join(os.path.dirname(__file__), "static", "uploads")
 os.makedirs(PASTA_UPLOADS, exist_ok=True)
 
@@ -561,11 +585,17 @@ AVATAR_PADRAO = "https://api.dicebear.com/7.x/identicon/svg?seed="
 
 ESTILO_COMUM = """
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-html, body { height:100%; }
+html, body { height:100%; max-width:100%; overflow-x:hidden; }
 body { margin:0; font-family: 'Segoe UI', Arial, sans-serif; background:#000000; color:#f2f2f2; }
+img, video, svg { max-width:100%; }
 button, .acao-lateral, .nav-inferior, .botao-seguir-lateral, .tag-badge, .item-icone, .painel-admin-abas button,
 .linha-membro-grupo button, .item-grupo, .voltar, .titulo-topo, .botao-engrenagem, .botao-info-grupo {
   -webkit-user-select:none; -moz-user-select:none; user-select:none;
+}
+/* Em telas grandes (PC), impede que o conteudo principal fique esticado/cortado
+   de um lado a outro do monitor: centraliza um miolo com largura maxima confortavel. */
+@media (min-width: 900px) {
+  .container { max-width: 900px; margin-left:auto; margin-right:auto; }
 }
 .tag-badge { display:inline-flex; align-items:center; gap:4px; font-size:10px; padding:2px 7px; border-radius:8px; font-weight:bold; color:#000; vertical-align:middle; margin-left:4px; }
 .tag-badge img { width:12px; height:12px; border-radius:50%; object-fit:cover; }
@@ -4173,9 +4203,10 @@ body { display:flex; height:100vh; overflow:hidden; }
 .item-contato .idc { font-size:11px; color:#888; }
 .vazio-contatos { padding:20px; color:#777; font-size:13px; text-align:center; }
 .chat-area { flex:1; display:flex; flex-direction:column; min-width:0; }
-.topo-chat { padding:14px 18px; border-bottom:1px solid #ffffff22; display:flex; align-items:center; gap:12px; }
-.topo-chat img { width:34px; height:34px; border-radius:50%; object-fit:cover; }
+.topo-chat { padding:14px 18px; border-bottom:1px solid #ffffff22; display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+.topo-chat img { width:34px; height:34px; border-radius:50%; object-fit:cover; flex-shrink:0; }
 .topo-chat-acoes { margin-left:auto; display:flex; gap:6px; flex-wrap:wrap; }
+.botao-voltar-lista { display:none; font-size:20px; cursor:pointer; flex-shrink:0; }
 .badge-cripto { font-size:11px; padding:4px 10px; border-radius:12px; background:#0d0d0d; border:1px solid #3ddc6a55; color:#3ddc6a; display:none; }
 .badge-cripto.ativo { display:inline-block; }
 .msgs-zap { flex:1; overflow-y:auto; padding:18px; display:flex; flex-direction:column; gap:10px; }
@@ -4196,12 +4227,14 @@ body { display:flex; height:100vh; overflow:hidden; }
   .sidebar-zap { position:fixed; z-index:20; height:100vh; transition:margin-left 0.2s; }
   .sidebar-zap.recolhida { margin-left:-280px; }
   .bolha { max-width:85%; }
+  .botao-voltar-lista { display:block; }
+  .topo-chat-acoes { width:100%; margin-left:0; justify-content:flex-start; }
 }
-.modal-chamada { display:none; position:fixed; inset:0; background:#000000f2; z-index:200; align-items:center; justify-content:center; flex-direction:column; color:#fff; text-align:center; }
+.modal-chamada { display:none; position:fixed; inset:0; background:#000000f2; z-index:200; align-items:center; justify-content:center; flex-direction:column; color:#fff; text-align:center; padding:16px; }
 .modal-chamada.aberto { display:flex; }
 .modal-chamada img { width:96px; height:96px; border-radius:50%; object-fit:cover; margin-bottom:16px; border:2px solid #ffffff33; }
 .modal-chamada .status-chamada { color:#888; margin-bottom:30px; font-size:14px; }
-.modal-chamada .botoes-chamada { display:flex; gap:20px; }
+.modal-chamada .botoes-chamada { display:flex; gap:20px; flex-wrap:wrap; justify-content:center; }
 .botao-chamada-circulo { width:56px; height:56px; border-radius:50%; border:none; font-size:22px; cursor:pointer; display:flex; align-items:center; justify-content:center; }
 .botao-chamada-circulo.aceitar { background:#3ddc6a; color:#000; }
 .botao-chamada-circulo.recusar, .botao-chamada-circulo.encerrar { background:#ff3b3b; color:#fff; }
@@ -4224,6 +4257,7 @@ body { display:flex; height:100vh; overflow:hidden; }
   <div class="sem-conversa" id="semConversa">Adicione um contato pelo ID (#) para comecar a conversar.</div>
   <div id="conversaAberta" style="display:none; flex:1; display:flex; flex-direction:column; min-height:0;">
     <div class="topo-chat">
+      <span class="botao-voltar-lista" id="botaoVoltarLista" onclick="voltarParaLista()" title="Voltar para a lista de conversas">&#8592;</span>
       <img id="avatarChatAtual" src="">
       <div><div id="nomeChatAtual" style="font-weight:bold;"></div><div id="idChatAtual" style="font-size:11px;color:#888;"></div></div>
       <div class="topo-chat-acoes">
@@ -4251,6 +4285,7 @@ body { display:flex; height:100vh; overflow:hidden; }
   <div id="nomeChamada" style="font-size:18px;font-weight:bold;z-index:2;"></div>
   <div class="status-chamada" id="statusChamada" style="z-index:2;">Chamando...</div>
   <div class="botoes-chamada" id="botoesChamada" style="z-index:2;"></div>
+  <button id="avisoToqueChamada" onclick="liberarMidiaChamada()" style="display:none;z-index:3;position:absolute;bottom:30%;padding:12px 20px;border-radius:20px;border:none;background:#fff;color:#000;font-weight:bold;cursor:pointer;">Toque para ativar audio/video</button>
   <audio id="audioRemoto" autoplay></audio>
 </div>
 <script>
@@ -4399,11 +4434,15 @@ async function alternarGravacaoAudio() {
     } catch (e) { alert("Nao foi possivel acessar o microfone."); }
 }
 
+function voltarParaLista() {
+    document.getElementById("sidebarZap").classList.remove("recolhida");
+}
+
 carregarContatos();
 setInterval(() => { if (contatoAtual) carregarMensagens(); }, 4000);
 
 // ---------- Ligacoes de voz (WebRTC + sinalizacao via polling) ----------
-const CONFIG_ICE = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
+const CONFIG_ICE = { iceServers: """ + ICE_SERVERS_JSON + """ };
 let pc = null, streamLocal = null, chamadaAtualId = null, souQuemLigou = false, contatoDaChamada = null;
 let indiceCandidatosRecebidos = 0, pollCandidatos = null, pollStatusLigacao = null, pollChamadaEntrando = null;
 
@@ -4458,6 +4497,7 @@ function fecharModalChamada() {
     document.getElementById("videoRemoto").srcObject = null;
     document.getElementById("videoLocal").classList.remove("ativo", "tela-cheia");
     document.getElementById("videoLocal").srcObject = null;
+    document.getElementById("avisoToqueChamada").style.display = "none";
     cameraLigada = false;
     chamadaComVideo = false;
 }
@@ -4473,11 +4513,18 @@ async function criarConexao(alvoNome, comVideo) {
         videoLocal.classList.add("ativo");
     }
     pc.ontrack = (ev) => {
-        document.getElementById("audioRemoto").srcObject = ev.streams[0];
+        const audioRemoto = document.getElementById("audioRemoto");
+        audioRemoto.srcObject = ev.streams[0];
+        audioRemoto.play().catch(() => mostrarAvisoToqueParaOuvir());
         const videoRemoto = document.getElementById("videoRemoto");
         if (ev.track.kind === "video") {
             videoRemoto.srcObject = ev.streams[0];
             videoRemoto.classList.add("ativo");
+            // Alguns navegadores bloqueiam o autoplay de video com som se nao
+            // houver um gesto recente do usuario - sem isso a pessoa via a tela
+            // preta/sem imagem mesmo com a chamada conectada. Tentamos tocar e,
+            // se for bloqueado, mostramos um botao para o usuario liberar.
+            videoRemoto.play().catch(() => mostrarAvisoToqueParaOuvir());
         }
     };
     pc.onicecandidate = (ev) => {
@@ -4486,8 +4533,34 @@ async function criarConexao(alvoNome, comVideo) {
         }
     };
     pc.onconnectionstatechange = () => {
-        if (pc && (pc.connectionState === "disconnected" || pc.connectionState === "failed" || pc.connectionState === "closed")) encerrarChamada(false);
+        if (!pc) return;
+        if (pc.connectionState === "connected") {
+            const statusEl = document.getElementById("statusChamada");
+            if (statusEl) statusEl.textContent = "Em chamada";
+        } else if (pc.connectionState === "failed") {
+            // Falha de conexao geralmente e falta de um servidor TURN quando as
+            // duas pessoas estao atras de redes fechadas (dados moveis, etc).
+            const statusEl = document.getElementById("statusChamada");
+            if (statusEl) statusEl.textContent = "Nao foi possivel conectar (rede). Tente por Wi-Fi.";
+            setTimeout(() => encerrarChamada(true), 2500);
+        } else if (pc.connectionState === "disconnected" || pc.connectionState === "closed") {
+            encerrarChamada(false);
+        }
     };
+}
+
+function mostrarAvisoToqueParaOuvir() {
+    const aviso = document.getElementById("avisoToqueChamada");
+    if (aviso) aviso.style.display = "block";
+}
+function liberarMidiaChamada() {
+    const videoRemoto = document.getElementById("videoRemoto");
+    const audioRemoto = document.getElementById("audioRemoto");
+    videoRemoto.muted = false;
+    videoRemoto.play().catch(() => {});
+    audioRemoto.play().catch(() => {});
+    const aviso = document.getElementById("avisoToqueChamada");
+    if (aviso) aviso.style.display = "none";
 }
 
 function iniciarPollCandidatos() {
