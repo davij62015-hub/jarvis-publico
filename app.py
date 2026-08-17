@@ -129,6 +129,18 @@ SMTP_PORT = int(os.environ.get("SMTP_PORT", "465"))
 SMTP_USUARIO = os.environ.get("SMTP_USUARIO", "")
 SMTP_SENHA = os.environ.get("SMTP_SENHA", "")
 SMTP_REMETENTE = os.environ.get("SMTP_REMETENTE", SMTP_USUARIO)
+
+# Envio de email via Resend (API HTTP - nao depende de porta SMTP, que o Render
+# costuma bloquear no plano free). Se RESEND_API_KEY estiver configurada, ela
+# tem prioridade sobre o SMTP. RESEND_REMETENTE pode ficar em branco pra usar
+# o dominio de teste do Resend (onboarding@resend.dev).
+RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "")
+RESEND_REMETENTE = os.environ.get("RESEND_REMETENTE", "Jarvis <onboarding@resend.dev>")
+
+
+def email_esta_configurado():
+    """True se existir algum jeito de mandar email (Resend ou SMTP)."""
+    return bool(RESEND_API_KEY) or bool(SMTP_HOST and SMTP_USUARIO and SMTP_SENHA)
 MINUTOS_VALIDADE_CODIGO = 10
 
 
@@ -353,18 +365,49 @@ def gerar_codigo():
     return "".join(secrets.choice("0123456789") for _ in range(6))
 
 
+def _enviar_email_via_resend(email, assunto, corpo):
+    resposta = requests.post(
+        "https://api.resend.com/emails",
+        headers={
+            "Authorization": f"Bearer {RESEND_API_KEY}",
+            "Content-Type": "application/json",
+        },
+        json={
+            "from": RESEND_REMETENTE,
+            "to": [email],
+            "subject": assunto,
+            "text": corpo,
+        },
+        timeout=10,
+    )
+    if resposta.status_code >= 400:
+        raise Exception(f"Resend respondeu {resposta.status_code}: {resposta.text[:300]}")
+    return True
+
+
 def enviar_email_codigo(email, codigo):
-    """Envia o codigo de login por email via SMTP. Se o SMTP nao estiver
-    configurado (ambiente de teste/local), grava o codigo no console."""
+    """Envia o codigo de login por email. Tenta primeiro via Resend (API HTTP,
+    nao bloqueada pelo Render); se nao estiver configurado, cai pro SMTP; se
+    nenhum dos dois estiver configurado, grava o codigo no console."""
     assunto = "Seu codigo de acesso - Jarvis"
     corpo = f"Seu codigo de verificacao e: {codigo}\n\nEle expira em {MINUTOS_VALIDADE_CODIGO} minutos.\nSe voce nao pediu esse codigo, ignore este email."
+
+    if RESEND_API_KEY and requests is not None:
+        try:
+            return _enviar_email_via_resend(email, assunto, corpo)
+        except Exception as erro:
+            print(f"[JARVIS] falha ao enviar email via Resend para {email}: {erro}")
+            # cai pro SMTP abaixo se tiver configurado, em vez de desistir na hora
+
     if not (SMTP_HOST and SMTP_USUARIO and SMTP_SENHA):
-        # SMTP nao configurado no servidor (variaveis de ambiente ausentes no Render).
-        # Antes isso fingia sucesso e deixava a pessoa travada, porque o codigo so
-        # aparecia no log do servidor, que ninguem alem do dono consegue ver.
-        # Agora avisamos a rota chamadora para que o codigo seja mostrado na tela.
-        print(f"[JARVIS] (SMTP nao configurado) codigo para {email}: {codigo}")
-        return "sem_smtp"
+        if not RESEND_API_KEY:
+            # Nem Resend nem SMTP configurados (ambiente de teste/local).
+            # Antes isso fingia sucesso e deixava a pessoa travada, porque o codigo so
+            # aparecia no log do servidor, que ninguem alem do dono consegue ver.
+            # Agora avisamos a rota chamadora para que o codigo seja mostrado na tela.
+            print(f"[JARVIS] (email nao configurado) codigo para {email}: {codigo}")
+            return "sem_smtp"
+        return False
     try:
         mensagem = MIMEText(corpo)
         mensagem["Subject"] = assunto
@@ -5012,10 +5055,10 @@ def auth_enviar_codigo():
     )
     conexao.commit()
     conexao.close()
-    if not (SMTP_HOST and SMTP_USUARIO and SMTP_SENHA):
-        # SMTP nao configurado: nem tenta mandar, ja responde com o codigo de teste
-        # na hora para a pessoa nao ficar travada na tela de login.
-        print(f"[JARVIS] (SMTP nao configurado) codigo para {email}: {codigo}")
+    if not email_esta_configurado():
+        # Nem Resend nem SMTP configurados: nem tenta mandar, ja responde com o
+        # codigo de teste na hora para a pessoa nao ficar travada na tela de login.
+        print(f"[JARVIS] (email nao configurado) codigo para {email}: {codigo}")
         return jsonify({"ok": True, "codigo_teste": codigo})
     # Dispara o envio numa thread, mas espera alguns segundos por ela: se o SMTP
     # falhar rapido (senha errada, porta bloqueada pelo host, etc.) a pessoa fica
