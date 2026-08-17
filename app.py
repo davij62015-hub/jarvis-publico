@@ -359,8 +359,9 @@ def enviar_email_codigo(email, codigo):
 
 
 def enviar_email_codigo_async(email, codigo):
-    """Dispara o envio do email em segundo plano, para a rota responder na hora
-    e o codigo cair mais rapido na tela (sem esperar o handshake SMTP inteiro)."""
+    """Dispara o envio do email totalmente em segundo plano (sem esperar nada).
+    Mantida para uso futuro; a rota de login usa uma versao com espera curta,
+    ver auth_enviar_codigo."""
     threading.Thread(target=enviar_email_codigo, args=(email, codigo), daemon=True).start()
 
 
@@ -4009,6 +4010,9 @@ body { display:flex; flex-direction:column; overflow:hidden; }
   <div class="lista-tickets" id="listaTickets" style="display:none;"></div>
   <div class="chat-suporte">
     <div class="mensagens-suporte" id="mensagensSuporte"></div>
+    <div class="area-input-suporte" id="areaAbrirChamado" style="display:none;">
+      <button onclick="abrirChamado()" style="width:100%;padding:12px 18px;border-radius:20px;border:none;background:#ffffff;color:#000;font-weight:bold;cursor:pointer;font-size:13px;">Abrir chamado</button>
+    </div>
     <div class="area-input-suporte">
       <input type="text" id="campoSuporte" placeholder="Escreva sua duvida...">
       <button onclick="enviarSuporte()">Enviar</button>
@@ -4056,6 +4060,18 @@ async function carregarMeuTicket() {
     const dados = await resposta.json();
     ticketAtualId = dados.ticket_id;
     renderizarMensagensSuporte(dados.mensagens || []);
+    if (!ehAgente) {
+        document.getElementById("areaAbrirChamado").style.display = ticketAtualId ? "none" : "flex";
+    }
+}
+
+async function abrirChamado() {
+    const resposta = await fetch("/suporte/abrir_chamado", { method: "POST" });
+    const dados = await resposta.json();
+    if (!dados.ok) { alert(dados.erro || "Nao foi possivel abrir o chamado."); return; }
+    ticketAtualId = dados.ticket_id;
+    document.getElementById("areaAbrirChamado").style.display = "none";
+    carregarMeuTicket();
 }
 
 async function carregarListaTickets() {
@@ -4099,11 +4115,11 @@ async function enviarSuporte() {
 document.getElementById("campoSuporte").addEventListener("keydown", e => { if (e.key === "Enter") enviarSuporte(); });
 
 async function adicionarAgente() {
-    const alvo = document.getElementById("alvoAgente").value.trim();
+    const idPublico = document.getElementById("idAgente").value.trim();
     const resultado = document.getElementById("resultadoAgente");
-    if (!alvo) { resultado.textContent = "Digite um email ou ID."; return; }
+    if (!idPublico) { resultado.textContent = "Digite o ID da conta."; return; }
     resultado.textContent = "Adicionando...";
-    const resposta = await fetch("/suporte/agente", { method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({alvo}) });
+    const resposta = await fetch("/suporte/agente", { method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({id_publico: idPublico}) });
     const dados = await resposta.json();
     resultado.textContent = dados.ok ? ("Atendente adicionado: " + dados.usuario) : (dados.erro || "Erro.");
 }
@@ -4191,8 +4207,10 @@ body { display:flex; height:100vh; overflow:hidden; }
 .botao-chamada-circulo.recusar, .botao-chamada-circulo.encerrar { background:#ff3b3b; color:#fff; }
 .video-remoto-chamada { display:none; width:100%; height:100%; position:absolute; inset:0; object-fit:cover; background:#000; }
 .video-remoto-chamada.ativo { display:block; }
-.video-local-chamada { display:none; position:absolute; bottom:120px; right:20px; width:100px; height:140px; border-radius:12px; object-fit:cover; border:2px solid #ffffff44; z-index:2; background:#111; }
+.video-local-chamada { display:none; position:absolute; bottom:120px; right:20px; width:100px; height:140px; border-radius:12px; object-fit:cover; border:2px solid #ffffff44; z-index:2; cursor:pointer; background:#111; }
 .video-local-chamada.ativo { display:block; }
+.video-local-chamada.tela-cheia { bottom:0; right:0; top:0; left:0; width:100%; height:100%; border-radius:0; border:none; z-index:1; }
+.video-remoto-chamada.reduzido { position:absolute; bottom:120px; right:20px; width:100px; height:140px; border-radius:12px; border:2px solid #ffffff44; z-index:2; }
 </style></head>
 <body>
 <div class="sidebar-zap" id="sidebarZap">
@@ -4227,8 +4245,8 @@ body { display:flex; height:100vh; overflow:hidden; }
   </div>
 </div>
 <div class="modal-chamada" id="modalChamada">
-  <video class="video-remoto-chamada" id="videoRemoto" autoplay playsinline></video>
-  <video class="video-local-chamada" id="videoLocal" autoplay playsinline muted></video>
+  <video class="video-remoto-chamada" id="videoRemoto" autoplay playsinline onclick="alternarTelasChamada()"></video>
+  <video class="video-local-chamada" id="videoLocal" autoplay playsinline muted onclick="alternarTelasChamada()"></video>
   <img id="avatarChamada" src="">
   <div id="nomeChamada" style="font-size:18px;font-weight:bold;z-index:2;"></div>
   <div class="status-chamada" id="statusChamada" style="z-index:2;">Chamando...</div>
@@ -4416,6 +4434,15 @@ function alternarCamera() {
     document.getElementById("videoLocal").classList.toggle("ativo", cameraLigada);
 }
 
+function alternarTelasChamada() {
+    const videoRemoto = document.getElementById("videoRemoto");
+    const videoLocal = document.getElementById("videoLocal");
+    // so faz sentido trocar se os dois videos estiverem ativos (chamada de video dos dois lados)
+    if (!videoRemoto.classList.contains("ativo") || !videoLocal.classList.contains("ativo")) return;
+    videoRemoto.classList.toggle("reduzido");
+    videoLocal.classList.toggle("tela-cheia");
+}
+
 function abrirModalChamada(nome, avatar, statusTexto, botoesHtml, comVideo) {
     document.getElementById("nomeChamada").textContent = nome;
     document.getElementById("avatarChamada").src = avatar || (contatos.find(c => c.usuario === nome) || {}).avatar || "";
@@ -4427,9 +4454,9 @@ function abrirModalChamada(nome, avatar, statusTexto, botoesHtml, comVideo) {
 function fecharModalChamada() {
     document.getElementById("modalChamada").classList.remove("aberto");
     document.getElementById("avatarChamada").style.display = "";
-    document.getElementById("videoRemoto").classList.remove("ativo");
+    document.getElementById("videoRemoto").classList.remove("ativo", "reduzido");
     document.getElementById("videoRemoto").srcObject = null;
-    document.getElementById("videoLocal").classList.remove("ativo");
+    document.getElementById("videoLocal").classList.remove("ativo", "tela-cheia");
     document.getElementById("videoLocal").srcObject = null;
     cameraLigada = false;
     chamadaComVideo = false;
@@ -4899,9 +4926,21 @@ def auth_enviar_codigo():
         # na hora para a pessoa nao ficar travada na tela de login.
         print(f"[JARVIS] (SMTP nao configurado) codigo para {email}: {codigo}")
         return jsonify({"ok": True, "codigo_teste": codigo})
-    # Dispara o envio em segundo plano: a rota responde na hora (sem esperar o
-    # handshake SMTP inteiro), entao o codigo cai mais rapido do lado da pessoa.
-    enviar_email_codigo_async(email, codigo)
+    # Dispara o envio numa thread, mas espera alguns segundos por ela: se o SMTP
+    # falhar rapido (senha errada, porta bloqueada pelo host, etc.) a pessoa fica
+    # sabendo na hora em vez de ficar esperando um email que nunca vai chegar.
+    # Se so estiver lento (mais comum), a resposta segue positiva e o envio
+    # continua rodando em segundo plano.
+    resultado_caixa = {}
+
+    def _enviar_e_guardar():
+        resultado_caixa["ok"] = enviar_email_codigo(email, codigo)
+
+    thread_envio = threading.Thread(target=_enviar_e_guardar, daemon=True)
+    thread_envio.start()
+    thread_envio.join(timeout=6)
+    if "ok" in resultado_caixa and resultado_caixa["ok"] is False:
+        return jsonify({"ok": False, "erro": "Nao foi possivel enviar o codigo por email agora. Tente de novo em instantes."})
     return jsonify({"ok": True})
 
 
@@ -5764,7 +5803,7 @@ def suporte():
     if eh_dev:
         painel_admin_html = """
         <div class="painel-admin"><b>Adicionar atendente de suporte</b><br>
-        <input id="nomeAgente" placeholder="usuario"><input id="pinAgente" placeholder="PIN" type="password">
+        <input id="idAgente" placeholder="#ID da conta">
         <button onclick="adicionarAgente()">Adicionar</button>
         <div id="resultadoAgente" style="margin-top:6px;"></div></div>
         """
@@ -5778,20 +5817,20 @@ def suporte():
 def suporte_agente():
     if not eh_desenvolvedor(session.get("usuario")):
         return jsonify({"ok": False, "erro": "Sem permissao."}), 403
-    dados = request.get_json()
-    alvo = dados.get("usuario", "").strip()
-    pin = dados.get("pin", "").strip()
-    if pin != PIN_VERIFICACAO:
-        return jsonify({"ok": False, "erro": "PIN incorreto."})
+    dados = request.get_json() or {}
+    valor_id = (dados.get("id_publico") or "").strip().lstrip("#")
+    try:
+        id_publico = int(valor_id)
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "erro": "Digite um ID valido."})
+    alvo = buscar_usuario_por_id_publico(id_publico)
+    if not alvo:
+        return jsonify({"ok": False, "erro": "Nenhuma conta com esse ID."})
     conexao = obter_bd()
-    existe = conexao.execute("SELECT 1 FROM usuarios WHERE usuario = ? COLLATE NOCASE", (alvo,)).fetchone()
-    if not existe:
-        conexao.close()
-        return jsonify({"ok": False, "erro": "Usuario nao encontrado."})
-    conexao.execute("INSERT OR IGNORE INTO agentes_suporte (usuario) VALUES (?)", (alvo,))
+    conexao.execute("INSERT OR IGNORE INTO agentes_suporte (usuario) VALUES (?)", (alvo["usuario"],))
     conexao.commit()
     conexao.close()
-    return jsonify({"ok": True})
+    return jsonify({"ok": True, "usuario": alvo["usuario"]})
 
 
 @app.route("/suporte/meu_ticket")
@@ -5807,6 +5846,24 @@ def suporte_meu_ticket():
     mensagens = conexao.execute("SELECT remetente, texto FROM mensagens_suporte WHERE ticket_id = ? ORDER BY id ASC", (ticket["id"],)).fetchall()
     conexao.close()
     return jsonify({"ticket_id": ticket["id"], "atendente": ticket["atendente"], "mensagens": [{"remetente": m["remetente"], "texto": m["texto"]} for m in mensagens]})
+
+
+@app.route("/suporte/abrir_chamado", methods=["POST"])
+def suporte_abrir_chamado():
+    """Cria um chamado de suporte vazio (sem precisar mandar mensagem primeiro)."""
+    if not session.get("usuario"):
+        return jsonify({"ok": False}), 401
+    usuario = session["usuario"]
+    conexao = obter_bd()
+    ticket = conexao.execute("SELECT id FROM tickets_suporte WHERE usuario = ? AND status != 'fechado' ORDER BY id DESC LIMIT 1", (usuario,)).fetchone()
+    if ticket:
+        conexao.close()
+        return jsonify({"ok": True, "ticket_id": ticket["id"], "ja_existia": True})
+    conexao.execute("INSERT INTO tickets_suporte (usuario, status, criado_em) VALUES (?, 'aberto', ?)", (usuario, datetime.now().isoformat()))
+    conexao.commit()
+    ticket_id = conexao.execute("SELECT id FROM tickets_suporte WHERE usuario = ? ORDER BY id DESC LIMIT 1", (usuario,)).fetchone()["id"]
+    conexao.close()
+    return jsonify({"ok": True, "ticket_id": ticket_id, "ja_existia": False})
 
 
 @app.route("/suporte/enviar", methods=["POST"])
