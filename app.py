@@ -562,6 +562,10 @@ ESTILO_COMUM = """
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 html, body { height:100%; }
 body { margin:0; font-family: 'Segoe UI', Arial, sans-serif; background:#000000; color:#f2f2f2; }
+button, .acao-lateral, .nav-inferior, .botao-seguir-lateral, .tag-badge, .item-icone, .painel-admin-abas button,
+.linha-membro-grupo button, .item-grupo, .voltar, .titulo-topo, .botao-engrenagem, .botao-info-grupo {
+  -webkit-user-select:none; -moz-user-select:none; user-select:none;
+}
 .tag-badge { display:inline-flex; align-items:center; gap:4px; font-size:10px; padding:2px 7px; border-radius:8px; font-weight:bold; color:#000; vertical-align:middle; margin-left:4px; }
 .tag-badge img { width:12px; height:12px; border-radius:50%; object-fit:cover; }
 """
@@ -4185,6 +4189,10 @@ body { display:flex; height:100vh; overflow:hidden; }
 .botao-chamada-circulo { width:56px; height:56px; border-radius:50%; border:none; font-size:22px; cursor:pointer; display:flex; align-items:center; justify-content:center; }
 .botao-chamada-circulo.aceitar { background:#3ddc6a; color:#000; }
 .botao-chamada-circulo.recusar, .botao-chamada-circulo.encerrar { background:#ff3b3b; color:#fff; }
+.video-remoto-chamada { display:none; width:100%; height:100%; position:absolute; inset:0; object-fit:cover; background:#000; }
+.video-remoto-chamada.ativo { display:block; }
+.video-local-chamada { display:none; position:absolute; bottom:120px; right:20px; width:100px; height:140px; border-radius:12px; object-fit:cover; border:2px solid #ffffff44; z-index:2; background:#111; }
+.video-local-chamada.ativo { display:block; }
 </style></head>
 <body>
 <div class="sidebar-zap" id="sidebarZap">
@@ -4204,7 +4212,8 @@ body { display:flex; height:100vh; overflow:hidden; }
         <span class="badge-cripto" id="badgeCripto" onclick="ativarCriptografia()" title="Toque para trocar a criptografia" style="display:none;">&#128274; criptografado</span>
         <span class="badge-cripto" id="botaoCriptografar" onclick="ativarCriptografia()" title="Ativar criptografia" style="display:inline-block;cursor:pointer;">&#128275; criptografar</span>
         <span class="badge-cripto" id="botaoBloquear" onclick="alternarBloqueio()" style="display:inline-block;cursor:pointer;border-color:#ff6b6b55;color:#ff6b6b;">Bloquear</span>
-        <span class="badge-cripto" id="botaoLigar" onclick="iniciarChamada()" style="display:inline-block;cursor:pointer;border-color:#3ddc6a55;color:#3ddc6a;">&#128222; Ligar</span>
+        <span class="badge-cripto" id="botaoLigar" onclick="iniciarChamada(false)" style="display:inline-block;cursor:pointer;border-color:#3ddc6a55;color:#3ddc6a;">&#128222; Ligar</span>
+        <span class="badge-cripto" id="botaoVideoChamada" onclick="iniciarChamada(true)" style="display:inline-block;cursor:pointer;border-color:#3ddc6a55;color:#3ddc6a;">&#128249; Video</span>
       </div>
     </div>
     <div class="msgs-zap" id="msgsZap"></div>
@@ -4218,10 +4227,12 @@ body { display:flex; height:100vh; overflow:hidden; }
   </div>
 </div>
 <div class="modal-chamada" id="modalChamada">
+  <video class="video-remoto-chamada" id="videoRemoto" autoplay playsinline></video>
+  <video class="video-local-chamada" id="videoLocal" autoplay playsinline muted></video>
   <img id="avatarChamada" src="">
-  <div id="nomeChamada" style="font-size:18px;font-weight:bold;"></div>
-  <div class="status-chamada" id="statusChamada">Chamando...</div>
-  <div class="botoes-chamada" id="botoesChamada"></div>
+  <div id="nomeChamada" style="font-size:18px;font-weight:bold;z-index:2;"></div>
+  <div class="status-chamada" id="statusChamada" style="z-index:2;">Chamando...</div>
+  <div class="botoes-chamada" id="botoesChamada" style="z-index:2;"></div>
   <audio id="audioRemoto" autoplay></audio>
 </div>
 <script>
@@ -4379,9 +4390,15 @@ let pc = null, streamLocal = null, chamadaAtualId = null, souQuemLigou = false, 
 let indiceCandidatosRecebidos = 0, pollCandidatos = null, pollStatusLigacao = null, pollChamadaEntrando = null;
 
 let mutadoLocal = false;
+let cameraLigada = false;
+let chamadaComVideo = false;
 function botoesEmChamadaHtml() {
-    return '<button class="botao-chamada-circulo" id="botaoMudo" style="background:#333;color:#fff;" onclick="alternarMudo()">' + (mutadoLocal ? '&#128263;' : '&#127908;') + '</button>' +
-           '<button class="botao-chamada-circulo encerrar" onclick="encerrarChamada(true)">&#128222;</button>';
+    let html = '<button class="botao-chamada-circulo" id="botaoMudo" style="background:#333;color:#fff;" onclick="alternarMudo()">' + (mutadoLocal ? '&#128263;' : '&#127908;') + '</button>';
+    if (chamadaComVideo) {
+        html += '<button class="botao-chamada-circulo" id="botaoCamera" style="background:#333;color:#fff;" onclick="alternarCamera()">' + (cameraLigada ? '&#128249;' : '&#128683;') + '</button>';
+    }
+    html += '<button class="botao-chamada-circulo encerrar" onclick="encerrarChamada(true)">&#128222;</button>';
+    return html;
 }
 function alternarMudo() {
     if (!streamLocal) return;
@@ -4390,21 +4407,52 @@ function alternarMudo() {
     const botao = document.getElementById("botaoMudo");
     if (botao) botao.innerHTML = mutadoLocal ? "&#128263;" : "&#127908;";
 }
+function alternarCamera() {
+    if (!streamLocal) return;
+    cameraLigada = !cameraLigada;
+    streamLocal.getVideoTracks().forEach(t => t.enabled = cameraLigada);
+    const botao = document.getElementById("botaoCamera");
+    if (botao) botao.innerHTML = cameraLigada ? "&#128249;" : "&#128683;";
+    document.getElementById("videoLocal").classList.toggle("ativo", cameraLigada);
+}
 
-function abrirModalChamada(nome, avatar, statusTexto, botoesHtml) {
+function abrirModalChamada(nome, avatar, statusTexto, botoesHtml, comVideo) {
     document.getElementById("nomeChamada").textContent = nome;
     document.getElementById("avatarChamada").src = avatar || (contatos.find(c => c.usuario === nome) || {}).avatar || "";
+    document.getElementById("avatarChamada").style.display = comVideo ? "none" : "";
     document.getElementById("statusChamada").textContent = statusTexto;
     document.getElementById("botoesChamada").innerHTML = botoesHtml;
     document.getElementById("modalChamada").classList.add("aberto");
 }
-function fecharModalChamada() { document.getElementById("modalChamada").classList.remove("aberto"); }
+function fecharModalChamada() {
+    document.getElementById("modalChamada").classList.remove("aberto");
+    document.getElementById("avatarChamada").style.display = "";
+    document.getElementById("videoRemoto").classList.remove("ativo");
+    document.getElementById("videoRemoto").srcObject = null;
+    document.getElementById("videoLocal").classList.remove("ativo");
+    document.getElementById("videoLocal").srcObject = null;
+    cameraLigada = false;
+    chamadaComVideo = false;
+}
 
-async function criarConexao(alvoNome) {
+async function criarConexao(alvoNome, comVideo) {
     pc = new RTCPeerConnection(CONFIG_ICE);
-    streamLocal = await navigator.mediaDevices.getUserMedia({ audio: true });
+    streamLocal = await navigator.mediaDevices.getUserMedia({ audio: true, video: comVideo ? { facingMode: "user" } : false });
     streamLocal.getTracks().forEach(t => pc.addTrack(t, streamLocal));
-    pc.ontrack = (ev) => { document.getElementById("audioRemoto").srcObject = ev.streams[0]; };
+    if (comVideo) {
+        cameraLigada = true;
+        const videoLocal = document.getElementById("videoLocal");
+        videoLocal.srcObject = streamLocal;
+        videoLocal.classList.add("ativo");
+    }
+    pc.ontrack = (ev) => {
+        document.getElementById("audioRemoto").srcObject = ev.streams[0];
+        const videoRemoto = document.getElementById("videoRemoto");
+        if (ev.track.kind === "video") {
+            videoRemoto.srcObject = ev.streams[0];
+            videoRemoto.classList.add("ativo");
+        }
+    };
     pc.onicecandidate = (ev) => {
         if (ev.candidate && chamadaAtualId) {
             fetch("/zap/chamada/candidato", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({chamada_id: chamadaAtualId, candidato: ev.candidate}) });
@@ -4427,12 +4475,19 @@ function iniciarPollCandidatos() {
     }, 1500);
 }
 
-async function iniciarChamada() {
+async function iniciarChamada(comVideo) {
     if (!contatoAtual) return;
     contatoDaChamada = contatoAtual;
     souQuemLigou = true;
-    abrirModalChamada(contatoDaChamada, null, "Chamando...", '<button class="botao-chamada-circulo encerrar" onclick="encerrarChamada(true)">&#128222;</button>');
-    await criarConexao(contatoDaChamada);
+    chamadaComVideo = !!comVideo;
+    abrirModalChamada(contatoDaChamada, null, "Chamando...", '<button class="botao-chamada-circulo encerrar" onclick="encerrarChamada(true)">&#128222;</button>', chamadaComVideo);
+    try {
+        await criarConexao(contatoDaChamada, chamadaComVideo);
+    } catch (e) {
+        alert(chamadaComVideo ? "Nao foi possivel acessar a camera/microfone." : "Nao foi possivel acessar o microfone.");
+        fecharModalChamada();
+        return;
+    }
     const oferta = await pc.createOffer();
     await pc.setLocalDescription(oferta);
     const r = await fetch("/zap/chamada/iniciar", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({contato: contatoDaChamada, oferta}) });
@@ -4465,13 +4520,20 @@ async function verificarChamadaEntrando() {
     contatoDaChamada = d.chamada.de;
     souQuemLigou = false;
     window._ofertaRecebida = d.chamada.oferta;
-    abrirModalChamada(contatoDaChamada, null, "Chamada recebida...",
+    chamadaComVideo = !!(d.chamada.oferta && d.chamada.oferta.sdp && d.chamada.oferta.sdp.indexOf("m=video") !== -1);
+    abrirModalChamada(contatoDaChamada, null, chamadaComVideo ? "Chamada de video recebida..." : "Chamada recebida...",
         '<button class="botao-chamada-circulo aceitar" onclick="aceitarChamada()">&#9742;</button>' +
-        '<button class="botao-chamada-circulo recusar" onclick="recusarChamada()">&#10006;</button>');
+        '<button class="botao-chamada-circulo recusar" onclick="recusarChamada()">&#10006;</button>', chamadaComVideo);
 }
 
 async function aceitarChamada() {
-    await criarConexao(contatoDaChamada);
+    try {
+        await criarConexao(contatoDaChamada, chamadaComVideo);
+    } catch (e) {
+        alert(chamadaComVideo ? "Nao foi possivel acessar a camera/microfone." : "Nao foi possivel acessar o microfone.");
+        recusarChamada();
+        return;
+    }
     await pc.setRemoteDescription(window._ofertaRecebida);
     const resposta = await pc.createAnswer();
     await pc.setLocalDescription(resposta);
@@ -4971,7 +5033,7 @@ def inicio():
     if not session.get("usuario"):
         return redirect(url_for("login"))
     marcar_atividade(session["usuario"])
-    pagina = PAGINA_INICIO.replace("{fundo_url}", FUNDO_INICIO_URL)
+    pagina = PAGINA_INICIO.replace("{fundo_url}", obter_config("fundo_inicio", FUNDO_INICIO_URL))
     pagina = pagina.replace("{qtd_online}", str(contar_online()))
     pagina = pagina.replace("{qtd_contas}", str(contar_contas()))
 
@@ -5252,6 +5314,12 @@ def rede():
                 <button class="acao" onclick="enviarConfig('logo_login','logoArquivo','resultadoLogo')">Salvar logo</button>
               </div>
               <div class="resultado-admin" id="resultadoLogo"></div>
+              <label class="rotulo-campo">Plano de fundo da tela inicial</label>
+              <div class="linha-admin">
+                <input id="fundoArquivo" type="file" accept="image/*">
+                <button class="acao" onclick="enviarConfig('fundo_inicio','fundoArquivo','resultadoFundo')">Salvar fundo</button>
+              </div>
+              <div class="resultado-admin" id="resultadoFundo"></div>
               <div class="resultado-admin" id="resultadoIcones"></div>
             </div>
 
@@ -5629,6 +5697,7 @@ def admin_config():
     chave = request.form.get("chave", "").strip()
     chaves_permitidas = {
         "icone_jarvis", "icone_jarvisweb", "icone_suporte", "icone_zap", "selo_verificado_url", "logo_login", "icone_app",
+        "fundo_inicio",
     }
     if chave not in chaves_permitidas:
         return jsonify({"ok": False, "erro": "Configuracao invalida."})
