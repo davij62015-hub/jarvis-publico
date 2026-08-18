@@ -17,6 +17,7 @@ import secrets
 import smtplib
 import ssl
 import threading
+import queue
 from email.mime.text import MIMEText
 from datetime import datetime, timedelta
 from flask import Flask, request, jsonify, session, redirect, url_for, send_file
@@ -71,6 +72,157 @@ def _bloquear_listagem_pastas():
 
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 _cliente = Groq(api_key=GROQ_API_KEY) if (Groq and GROQ_API_KEY) else None
+
+# ---------- Varias IAs de texto gratuitas, em CORRIDA ----------
+# Em vez de tentar uma, esperar falhar, tentar a proxima (o que soma o tempo de
+# espera de cada uma), aqui a gente dispara todas as que tiverem chave configurada
+# AO MESMO TEMPO numa thread cada, e fica com a primeira que responder - as outras
+# sao descartadas. Isso deixa a resposta rapida mesmo se uma das IAs estiver lenta
+# naquele momento, porque ela simplesmente perde a corrida em vez de travar tudo.
+# Cada uma so entra em acao se a chave dela estiver configurada nas variaveis de
+# ambiente do Render - sem chave, ela e simplesmente pulada (nao quebra nada).
+OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
+CEREBRAS_API_KEY = os.environ.get("CEREBRAS_API_KEY", "")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+
+
+def _chat_groq(modelo, mensagens_completas):
+    if not _cliente:
+        raise RuntimeError("Groq nao configurado")
+    resposta = _cliente.chat.completions.create(model=modelo, messages=mensagens_completas, max_tokens=500)
+    return resposta.choices[0].message.content
+
+
+def _chat_http_openai_compat(url, chave, modelo, mensagens_completas):
+    """Varios provedores gratuitos (OpenRouter, Cerebras) falam o mesmo formato da
+    OpenAI - reaproveita a mesma chamada HTTP pra todos."""
+    if not chave or not requests:
+        raise RuntimeError("provedor nao configurado")
+    resposta = requests.post(
+        url,
+        headers={"Authorization": f"Bearer {chave}", "Content-Type": "application/json"},
+        json={"model": modelo, "messages": mensagens_completas, "max_tokens": 500},
+        timeout=20,
+    )
+    resposta.raise_for_status()
+    return resposta.json()["choices"][0]["message"]["content"]
+
+
+def _chat_gemini(mensagens_completas):
+    """Google Gemini (plano gratuito generoso, chave gratis em aistudio.google.com/apikey).
+    A API do Gemini fala um formato proprio (nao e compativel com OpenAI), entao
+    converte as mensagens no formato dela antes de mandar."""
+    if not GEMINI_API_KEY or not requests:
+        raise RuntimeError("Gemini nao configurado")
+    sistema = " ".join(m["content"] for m in mensagens_completas if m.get("role") == "system")
+    contents = [
+        {"role": "model" if m["role"] == "assistant" else "user", "parts": [{"text": m["content"]}]}
+        for m in mensagens_completas if m.get("role") in ("user", "assistant")
+    ]
+    corpo = {"contents": contents}
+    if sistema:
+        corpo["system_instruction"] = {"parts": [{"text": sistema}]}
+    resposta = requests.post(
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
+        headers={"Content-Type": "application/json", "x-goog-api-key": GEMINI_API_KEY},
+        json=corpo,
+        timeout=20,
+    )
+    resposta.raise_for_status()
+    return resposta.json()["candidates"][0]["content"]["parts"][0]["text"]
+
+
+def gerar_resposta_ia(mensagens_completas):
+    """Dispara todas as IAs de texto configuradas ao mesmo tempo e devolve a
+    primeira que responder (corrida). Bem mais rapido que tentar uma de cada vez,
+    porque o tempo total passa a ser o da mais rapida, nao a soma de todas."""
+    provedores = [
+        ("Groq (70b)", lambda: _chat_groq("llama-3.3-70b-versatile", mensagens_completas)),
+        ("Groq (8b, mais rapida)", lambda: _chat_groq("llama-3.1-8b-instant", mensagens_completas)),
+        ("Cerebras", lambda: _chat_http_openai_compat(
+            "https://api.cerebras.ai/v1/chat/completions", CEREBRAS_API_KEY, "llama3.1-8b", mensagens_completas)),
+        ("OpenRouter", lambda: _chat_http_openai_compat(
+            "https://openrouter.ai/api/v1/chat/completions", OPENROUTER_API_KEY,
+            "meta-llama/llama-3.1-8b-instruct:free", mensagens_completas)),
+        ("Gemini", lambda: _chat_gemini(mensagens_completas)),
+    ]
+    resultados = queue.Queue()
+
+    def _rodar(nome, chamada):
+        try:
+            resultados.put(("ok", nome, chamada()))
+        except Exception as erro:
+            resultados.put(("erro", nome, erro))
+
+    threads = [threading.Thread(target=_rodar, args=(nome, chamada), daemon=True) for nome, chamada in provedores]
+    for t in threads:
+        t.start()
+    erros = []
+    for _ in range(len(provedores)):
+        status, nome, valor = resultados.get(timeout=25)
+        if status == "ok":
+            if erros:
+                print(f"[CHAT CPA] '{nome}' venceu a corrida (outras ainda rodando/falharam: {[e[0] for e in erros]})")
+            return valor
+        erros.append((nome, valor))
+        print(f"[CHAT CPA] provedor de texto '{nome}' falhou: {valor}")
+    raise RuntimeError(f"Todas as IAs de texto falharam. Erros: {erros}")
+
+
+# ---------- Varias IAs de imagem gratuitas, em cascata ----------
+# Igual ao texto: se a Pollinations demorar demais ou cair, tenta o Hugging Face
+# (precisa de HF_API_KEY gratuita em huggingface.co/settings/tokens).
+HF_API_KEY = os.environ.get("HF_API_KEY", "")
+
+
+def gerar_imagem_bytes(prompt_melhorado, seed):
+    """Dispara Pollinations e Hugging Face (se configurado) ao mesmo tempo e fica
+    com a primeira imagem valida que chegar - assim a demora vira a da mais rapida
+    das duas, nao a soma (uma esperar a outra falhar/dar timeout pra so entao tentar
+    a proxima)."""
+    def _pollinations():
+        url_pollinations = (
+            "https://image.pollinations.ai/prompt/" + urllib.parse.quote(prompt_melhorado)
+            + f"?model=flux&width=1024&height=1024&seed={seed}&nologo=true"
+        )
+        resposta = requests.get(url_pollinations, timeout=25)
+        if resposta.status_code == 200 and resposta.content and resposta.headers.get("content-type", "").startswith("image"):
+            return resposta.content
+        raise RuntimeError(f"Pollinations respondeu sem imagem valida (status {resposta.status_code})")
+
+    def _hugging_face():
+        if not HF_API_KEY:
+            raise RuntimeError("Hugging Face nao configurado")
+        resposta = requests.post(
+            "https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-schnell",
+            headers={"Authorization": f"Bearer {HF_API_KEY}"},
+            json={"inputs": prompt_melhorado},
+            timeout=30,
+        )
+        if resposta.status_code == 200 and resposta.headers.get("content-type", "").startswith("image"):
+            return resposta.content
+        raise RuntimeError(f"Hugging Face respondeu sem imagem valida (status {resposta.status_code})")
+
+    if not requests:
+        return None
+    provedores = [("Pollinations", _pollinations), ("Hugging Face", _hugging_face)]
+    resultados = queue.Queue()
+
+    def _rodar(nome, chamada):
+        try:
+            resultados.put(("ok", nome, chamada()))
+        except Exception as erro:
+            resultados.put(("erro", nome, erro))
+
+    threads = [threading.Thread(target=_rodar, args=(nome, chamada), daemon=True) for nome, chamada in provedores]
+    for t in threads:
+        t.start()
+    for _ in range(len(provedores)):
+        status, nome, valor = resultados.get(timeout=32)
+        if status == "ok":
+            return valor
+        print(f"[CHAT CPA] provedor de imagem '{nome}' falhou: {valor}")
+    return None
 
 SISTEMA = (
     "Voce e o CHAT CPA, assistente de IA criado por Samuca. "
