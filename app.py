@@ -105,7 +105,8 @@ def _chat_http_openai_compat(url, chave, modelo, mensagens_completas):
         json={"model": modelo, "messages": mensagens_completas, "max_tokens": 500},
         timeout=15,
     )
-    resposta.raise_for_status()
+    if resposta.status_code >= 400:
+        raise RuntimeError(f"HTTP {resposta.status_code}: {resposta.text[:300]}")
     return resposta.json()["choices"][0]["message"]["content"]
 
 
@@ -124,12 +125,13 @@ def _chat_gemini(mensagens_completas):
     if sistema:
         corpo["system_instruction"] = {"parts": [{"text": sistema}]}
     resposta = requests.post(
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent",
         headers={"Content-Type": "application/json", "x-goog-api-key": GEMINI_API_KEY},
         json=corpo,
         timeout=15,
     )
-    resposta.raise_for_status()
+    if resposta.status_code >= 400:
+        raise RuntimeError(f"HTTP {resposta.status_code}: {resposta.text[:300]}")
     return resposta.json()["candidates"][0]["content"]["parts"][0]["text"]
 
 
@@ -138,10 +140,10 @@ def gerar_resposta_ia(mensagens_completas):
     primeira que responder (corrida). Bem mais rapido que tentar uma de cada vez,
     porque o tempo total passa a ser o da mais rapida, nao a soma de todas."""
     provedores = [
-        ("Groq (70b)", lambda: _chat_groq("llama-3.3-70b-versatile", mensagens_completas)),
-        ("Groq (8b, mais rapida)", lambda: _chat_groq("llama-3.1-8b-instant", mensagens_completas)),
+        ("Groq (70b)", lambda: _chat_groq("openai/gpt-oss-120b", mensagens_completas)),
+        ("Groq (8b, mais rapida)", lambda: _chat_groq("openai/gpt-oss-20b", mensagens_completas)),
         ("Cerebras", lambda: _chat_http_openai_compat(
-            "https://api.cerebras.ai/v1/chat/completions", CEREBRAS_API_KEY, "llama3.1-8b", mensagens_completas)),
+            "https://api.cerebras.ai/v1/chat/completions", CEREBRAS_API_KEY, "gpt-oss-120b", mensagens_completas)),
         ("OpenRouter", lambda: _chat_http_openai_compat(
             "https://openrouter.ai/api/v1/chat/completions", OPENROUTER_API_KEY,
             "meta-llama/llama-3.1-8b-instruct:free", mensagens_completas)),
@@ -203,7 +205,7 @@ def gerar_imagem_bytes(prompt_melhorado, seed):
         if not HF_API_KEY:
             raise RuntimeError("Hugging Face nao configurado")
         resposta = requests.post(
-            "https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-schnell",
+            "https://router.huggingface.co/hf-inference/models/black-forest-labs/FLUX.1-schnell",
             headers={"Authorization": f"Bearer {HF_API_KEY}"},
             json={"inputs": prompt_melhorado},
             timeout=30,
@@ -7043,7 +7045,7 @@ def extensao_chat():
     if not mensagem:
         return jsonify({"resposta": "Descreva o que voce precisa que o codigo faca."})
     resposta = _cliente.chat.completions.create(
-        model="llama-3.3-70b-versatile",
+        model="openai/gpt-oss-120b",
         messages=[
             {"role": "system", "content": SISTEMA_EXTENSAO},
             {"role": "user", "content": f"Linguagem preferida: {linguagem}.\nPedido: {mensagem}"},
