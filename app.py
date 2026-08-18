@@ -1,6 +1,6 @@
 """
-Jarvis - Site Publico
-Chat com IA + geracao de imagem + conversor + modo de voz + rede social (JarvisWEB) + suporte.
+CHAT CPA - Site Publico
+Chat com IA + geracao de imagem + conversor + modo de voz + rede social (Social CPA) + suporte.
 NAO tem nenhum comando de controle de PC.
 """
 
@@ -73,7 +73,7 @@ GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 _cliente = Groq(api_key=GROQ_API_KEY) if (Groq and GROQ_API_KEY) else None
 
 SISTEMA = (
-    "Voce e o Jarvis, assistente de IA criado por Samuca. "
+    "Voce e o CHAT CPA, assistente de IA criado por Samuca. "
     "Responda em portugues do Brasil, de forma clara e amigavel, curto e direto (as vezes a resposta sera falada em voz alta, entao evite listas longas). "
     "Voce NAO tem controle sobre nenhum computador, e apenas um assistente de conversa e criacao de imagens."
 )
@@ -83,7 +83,7 @@ CONTA_DESENVOLVEDOR = "SAMUCA"
 PIN_VERIFICACAO = "9090"
 GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "")
 
-# ---------- Servidores ICE para as chamadas de audio/video do JarvisZap ----------
+# ---------- Servidores ICE para as chamadas de audio/video do ZAP ----------
 # So com STUN, muita gente atras de NAT "fechado" (comum em dados moveis/4G e em
 # algumas redes de empresa) NUNCA consegue trocar midia com a outra ponta - a
 # chamada conecta mas video/audio remoto nunca chega. Um servidor TURN resolve
@@ -135,7 +135,7 @@ SMTP_REMETENTE = os.environ.get("SMTP_REMETENTE", SMTP_USUARIO)
 # tem prioridade sobre o SMTP. RESEND_REMETENTE pode ficar em branco pra usar
 # o dominio de teste do Resend (onboarding@resend.dev).
 RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "")
-RESEND_REMETENTE = os.environ.get("RESEND_REMETENTE", "Jarvis <onboarding@resend.dev>")
+RESEND_REMETENTE = os.environ.get("RESEND_REMETENTE", "CHAT CPA <onboarding@resend.dev>")
 
 
 def email_esta_configurado():
@@ -208,7 +208,7 @@ def iniciar_bd():
             nome TEXT PRIMARY KEY, cor TEXT NOT NULL, foto TEXT
         )
     """)
-    # ---------- JarvisZap ----------
+    # ---------- ZAP ----------
     conexao.execute("""
         CREATE TABLE IF NOT EXISTS zap_contatos (
             usuario TEXT NOT NULL, contato TEXT NOT NULL, criado_em TEXT NOT NULL,
@@ -229,7 +229,7 @@ def iniciar_bd():
         )
     """)
     conexao.execute("CREATE TABLE IF NOT EXISTS zap_denuncias (id INTEGER PRIMARY KEY AUTOINCREMENT, mensagem_id INTEGER NOT NULL, denunciante TEXT NOT NULL, criado_em TEXT NOT NULL)")
-    # ---------- Grupos do JarvisZap ----------
+    # ---------- Grupos do ZAP ----------
     conexao.execute("""
         CREATE TABLE IF NOT EXISTS zap_grupos (
             id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT NOT NULL, foto TEXT,
@@ -255,11 +255,11 @@ def iniciar_bd():
     """)
     # ---------- Salvos (posts salvos pelo usuario no feed) ----------
     conexao.execute("CREATE TABLE IF NOT EXISTS salvos (usuario TEXT NOT NULL, post_id INTEGER NOT NULL, criado_em TEXT NOT NULL, PRIMARY KEY (usuario, post_id))")
-    # ---------- Bloqueios individuais no JarvisZap (diferente do bloqueio global por moderacao) ----------
+    # ---------- Bloqueios individuais no ZAP (diferente do bloqueio global por moderacao) ----------
     conexao.execute("CREATE TABLE IF NOT EXISTS zap_bloqueios (usuario TEXT NOT NULL, bloqueado TEXT NOT NULL, criado_em TEXT NOT NULL, PRIMARY KEY (usuario, bloqueado))")
     # ---------- Configuracoes gerais (icones dos apps, selo customizado, etc) ----------
     conexao.execute("CREATE TABLE IF NOT EXISTS configuracoes (chave TEXT PRIMARY KEY, valor TEXT)")
-    # ---------- Ligacoes de voz do JarvisZap (sinalizacao WebRTC via polling) ----------
+    # ---------- Ligacoes de voz do ZAP (sinalizacao WebRTC via polling) ----------
     conexao.execute("""
         CREATE TABLE IF NOT EXISTS zap_chamadas (
             id INTEGER PRIMARY KEY AUTOINCREMENT, quem_liga TEXT NOT NULL, quem_recebe TEXT NOT NULL,
@@ -389,14 +389,14 @@ def enviar_email_codigo(email, codigo):
     """Envia o codigo de login por email. Tenta primeiro via Resend (API HTTP,
     nao bloqueada pelo Render); se nao estiver configurado, cai pro SMTP; se
     nenhum dos dois estiver configurado, grava o codigo no console."""
-    assunto = "Seu codigo de acesso - Jarvis"
+    assunto = "Seu codigo de acesso - CHAT CPA"
     corpo = f"Seu codigo de verificacao e: {codigo}\n\nEle expira em {MINUTOS_VALIDADE_CODIGO} minutos.\nSe voce nao pediu esse codigo, ignore este email."
 
     if RESEND_API_KEY and requests is not None:
         try:
             return _enviar_email_via_resend(email, assunto, corpo)
         except Exception as erro:
-            print(f"[JARVIS] falha ao enviar email via Resend para {email}: {erro}")
+            print(f"[CHAT CPA] falha ao enviar email via Resend para {email}: {erro}")
             # cai pro SMTP abaixo se tiver configurado, em vez de desistir na hora
 
     if not (SMTP_HOST and SMTP_USUARIO and SMTP_SENHA):
@@ -405,7 +405,7 @@ def enviar_email_codigo(email, codigo):
             # Antes isso fingia sucesso e deixava a pessoa travada, porque o codigo so
             # aparecia no log do servidor, que ninguem alem do dono consegue ver.
             # Agora avisamos a rota chamadora para que o codigo seja mostrado na tela.
-            print(f"[JARVIS] (email nao configurado) codigo para {email}: {codigo}")
+            print(f"[CHAT CPA] (email nao configurado) codigo para {email}: {codigo}")
             return "sem_smtp"
         return False
     try:
@@ -421,7 +421,7 @@ def enviar_email_codigo(email, codigo):
             servidor.sendmail(SMTP_REMETENTE, [email], mensagem.as_string())
         return True
     except Exception as erro:
-        print(f"[JARVIS] falha ao enviar email para {email}: {erro}")
+        print(f"[CHAT CPA] falha ao enviar email para {email}: {erro}")
         return False
 
 
@@ -459,7 +459,7 @@ def html_tag(nome_tag):
     return f'<span class="tag-badge" style="background:{linha["cor"]}">{foto_html}{nome_tag}</span>'
 
 
-# ================= JarvisZap: presenca online, criptografia e moderacao =================
+# ================= ZAP: presenca online, criptografia e moderacao =================
 
 MINUTOS_CONSIDERADO_ONLINE = 3
 
@@ -490,7 +490,7 @@ def contar_contas():
 
 
 def id_conversa(usuario_a, usuario_b):
-    """Identificador estavel (e igual dos dois lados) de uma conversa do JarvisZap entre duas contas."""
+    """Identificador estavel (e igual dos dois lados) de uma conversa do ZAP entre duas contas."""
     return "|".join(sorted([usuario_a.lower(), usuario_b.lower()]))
 
 
@@ -577,7 +577,7 @@ def descriptografar_texto(texto_cifrado, frase):
         return None
 
 
-# Lista de termos usada pelo bot do Jarvis para barrar mensagens de texto com
+# Lista de termos usada pelo bot do CHAT CPA para barrar mensagens de texto com
 # conteudo adulto/sexual explicito ou de terror/ameaca grave. E uma checagem
 # simples por palavra-chave (nao substitui moderacao humana nem analisa fotos/
 # audios/videos, que exigiriam um servico externo de analise de midia).
@@ -2597,11 +2597,11 @@ PAGINA_BOAS_VINDAS = """
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>JARVIS IA</title>
+<title>CHAT CPA</title>
 <style>
   :root{
     --bg:#03060c;
-    --cyan:#5be6ff;
+    --cyan:#3ddc6a;
     --cyan-dim:#1f8fae;
     --blue:#2b6fff;
     --ink:#eaf7ff;
@@ -2749,8 +2749,8 @@ PAGINA_BOAS_VINDAS = """
 <div class="pular" onclick="window.location.href=\'/inicio\'">Pular &#8594;</div>
 
 <div class="layer" id="cena1">
-  <div class="core-wrap"><div class="core-glow"></div><div class="core"><div class="core-mark">JARVIS</div></div></div>
-  <div class="wordmark"><h1>JARVIS IA</h1><div class="sub">Inteligencia artificial</div></div>
+  <div class="core-wrap"><div class="core-glow"></div><div class="core"><div class="core-mark">CHAT CPA</div></div></div>
+  <div class="wordmark"><h1>CHAT CPA</h1><div class="sub">Inteligencia artificial</div></div>
 </div>
 <div class="layer" id="cena2">
   <div class="msg"><span class="eyebrow">Origem</span>Criado por Samuca, para explorar ate onde a inteligencia artificial pode chegar.</div>
@@ -2769,7 +2769,7 @@ PAGINA_BOAS_VINDAS = """
 </div>
 <div class="layer welcome" id="cena7">
   <h2>Ola, {nome}!</h2>
-  <div class="sub">JARVIS IA esta pronto para voce.</div>
+  <div class="sub">CHAT CPA esta pronto para voce.</div>
 </div>
 
 <script>
@@ -2824,13 +2824,13 @@ PAGINA_BOAS_VINDAS = """
 PAGINA_CARREGANDO = """
 <!DOCTYPE html>
 <html lang="pt-BR"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Jarvis</title>
+<title>CHAT CPA</title>
 <style>
 """ + ESTILO_COMUM + """
 body { height:100vh; display:flex; flex-direction:column; align-items:center; justify-content:center; position:relative; padding:0 30px; }
 .logo-hud { width:110px; height:110px; position:relative; margin-bottom:24px; }
 .anel { position:absolute; border-radius:50%; border:2px solid #ffffff; opacity:0.85; }
-.anel1 { inset:0; animation: girar 6s linear infinite; }
+.anel1 { inset:0; animation: girar 6s linear infinite; border-color:#3ddc6a; box-shadow:0 0 14px #3ddc6a55; }
 .anel2 { inset:14px; border-color:#cccccc; animation: girar 4s linear infinite reverse; }
 .anel3 { inset:30px; border-color:#999999; animation: girar 3s linear infinite; }
 @keyframes girar { from { transform: rotate(0deg);} to { transform: rotate(360deg);} }
@@ -2842,18 +2842,18 @@ h1 { letter-spacing:4px; font-size:22px; margin:0; }
 </style></head>
 <body>
 <div class="logo-hud"><div class="anel anel1"></div><div class="anel anel2"></div><div class="anel anel3"></div></div>
-<h1>JARVIS</h1>
+<h1>CHAT CPA</h1>
 <div class="dica-ia" id="dicaIA"></div>
 <div class="credito">feito por samuca</div>
 <script>
 const dicas = [
-    "<b>Voce sabia?</b> O Jarvis pode gerar imagens a partir de uma simples descricao em texto.",
-    "<b>Dica:</b> No modo de voz, o Jarvis responde falando - otimo pra usar sem olhar pra tela.",
-    "<b>Voce sabia?</b> O JarvisZap tem criptografia por frase - so quem sabe a senha le as mensagens.",
-    "<b>Dica:</b> Toque e segure um video no JarvisWEB pra ele tocar com som.",
+    "<b>Voce sabia?</b> O CHAT CPA pode gerar imagens a partir de uma simples descricao em texto.",
+    "<b>Dica:</b> No modo de voz, o CHAT CPA responde falando - otimo pra usar sem olhar pra tela.",
+    "<b>Voce sabia?</b> O ZAP tem criptografia por frase - so quem sabe a senha le as mensagens.",
+    "<b>Dica:</b> Toque e segure um video no Social CPA pra ele tocar com som.",
     "<b>Voce sabia?</b> O selo de verificado e o icone de cada app podem ser personalizados pelo dono.",
-    "<b>Dica:</b> Voce pode instalar o Jarvis na tela inicial do celular, como um app de verdade.",
-    "<b>Voce sabia?</b> O bot do Jarvis modera automaticamente o JarvisZap contra conteudo proibido.",
+    "<b>Dica:</b> Voce pode instalar o CHAT CPA na tela inicial do celular, como um app de verdade.",
+    "<b>Voce sabia?</b> O bot do CHAT CPA modera automaticamente o ZAP contra conteudo proibido.",
     "<b>Dica:</b> Cada conta tem um ID permanente - use ele pra adicionar contatos sem precisar do nome exato.",
 ];
 const escolhida = dicas[Math.floor(Math.random() * dicas.length)];
@@ -2867,7 +2867,7 @@ setTimeout(() => { window.location.href = "/inicio"; }, 2200);
 PAGINA_LOGIN = """
 <!DOCTYPE html>
 <html lang="pt-BR"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Jarvis</title>
+<title>CHAT CPA</title>
 <style>
 """ + ESTILO_COMUM + """
 body { min-height:100vh; display:flex; flex-direction:column; align-items:center; justify-content:center; padding:24px; background:radial-gradient(circle at 50% 15%, #141414, #000000 70%); overflow-y:auto; }
@@ -2904,7 +2904,7 @@ button.link-sutil:disabled { color:#444; text-decoration:none; cursor:default; }
 </style></head>
 <body>
 <img src="{logo_url}" class="logo-img" onerror="this.style.display='none'">
-<h2>Entrar no Jarvis</h2>
+<h2>Entrar no CHAT CPA</h2>
 <div class="cartao">
 {bloco_google}
 
@@ -3078,7 +3078,7 @@ async function finalizarCadastro() {
 PAGINA_INICIO = """
 <!DOCTYPE html>
 <html lang="pt-BR"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Jarvis</title>
+<title>CHAT CPA</title>
 <link rel="manifest" href="/manifest.json">
 <meta name="theme-color" content="#000000">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -3092,6 +3092,8 @@ body {
   background-size: cover; background-position: center; background-attachment: fixed;
 }
 .status-topo { text-align:center; padding:30px 0 6px; }
+.marca-topo { font-size:13px; font-weight:bold; letter-spacing:2px; color:#3ddc6a; text-shadow:0 0 10px #3ddc6a55; }
+.marca-topo span { display:block; font-size:10px; font-weight:400; letter-spacing:1px; color:#888; margin-top:2px; text-shadow:none; }
 .relogio { font-size:44px; font-weight:200; letter-spacing:2px; }
 .data { font-size:13px; color:#888; margin-top:4px; }
 .contadores { display:flex; align-items:center; justify-content:center; gap:18px; margin-top:12px; font-size:12px; color:#ccc; }
@@ -3107,6 +3109,7 @@ body {
 </style></head>
 <body>
 <div class="status-topo">
+  <div class="marca-topo">CHAT CPA<span>CRIPTOGRAFADO PARA AJUDAR</span></div>
   <div class="relogio" id="relogio">--:--</div>
   <div class="data" id="dataAtual"></div>
   <div class="contadores">
@@ -3115,10 +3118,10 @@ body {
   </div>
 </div>
 <div class="apps">
-  <a class="app-icone" href="/rede"><div class="icone-quadrado">{icone_jarvisweb}</div>JarvisWEB</a>
-  <a class="app-icone" href="/painel"><div class="icone-quadrado">{icone_jarvis}</div>Jarvis</a>
-  <a class="app-icone" href="/zap"><div class="icone-quadrado">{icone_zap}</div>JarvisZap</a>
-  <a class="app-icone" href="/extensao"><div class="icone-quadrado">&lt;/&gt;</div>Jarvis Extensao</a>
+  <a class="app-icone" href="/rede"><div class="icone-quadrado">{icone_jarvisweb}</div>Social CPA</a>
+  <a class="app-icone" href="/painel"><div class="icone-quadrado">{icone_jarvis}</div>CHAT CPA</a>
+  <a class="app-icone" href="/zap"><div class="icone-quadrado">{icone_zap}</div>ZAP</a>
+  <a class="app-icone" href="/extensao"><div class="icone-quadrado">&lt;/&gt;</div>CPA Codes</a>
   <a class="app-icone" href="/suporte"><div class="icone-quadrado">{icone_suporte}</div>Suporte</a>
   <a class="app-icone" href="/baixar"><div class="icone-quadrado">&#8595;</div>Baixar app</a>
 </div>
@@ -3156,7 +3159,7 @@ setInterval(pulsarPresenca, 20000);
 PAGINA = """
 <!DOCTYPE html>
 <html lang="pt-BR"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Jarvis</title>
+<title>CHAT CPA</title>
 <style>
 """ + ESTILO_COMUM + """
 body { display:flex; height:100vh; overflow:hidden; }
@@ -3245,7 +3248,7 @@ body { display:flex; height:100vh; overflow:hidden; }
     <div class="menu-icone" onclick="alternarSidebar()"><span></span><span></span><span></span></div>
     <a class="logo-link" href="/inicio">
       <img src="/static/logo.jpg" class="logo-img" onerror="this.style.display='none'">
-      <strong>Jarvis</strong>
+      <strong>CHAT CPA</strong>
     </a>
   </div>
   <a class="link-inicio" href="/inicio">Tela inicial</a>
@@ -3263,7 +3266,7 @@ body { display:flex; height:100vh; overflow:hidden; }
     <div class="topo-esquerda">
       <a href="/inicio" class="seta-inicio" title="Tela inicial">&#8592;</a>
       <div class="menu-icone menu-icone-mobile" onclick="alternarSidebar()"><span></span><span></span><span></span></div>
-      <span>JARVIS</span>
+      <span>CHAT CPA</span>
     </div>
     <select class="seletor-voz" id="seletorVoz"></select>
   </div>
@@ -3574,11 +3577,11 @@ renderizarMensagens();
 </body></html>
 """
 
-# ---------- REDE (JarvisWEB) ----------
+# ---------- REDE (Social CPA) ----------
 PAGINA_REDE = """
 <!DOCTYPE html>
 <html lang="pt-BR"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>JarvisWEB</title>
+<title>Social CPA</title>
 <style>
 """ + ESTILO_COMUM + """
 html, body { height:100%; overflow:hidden; background:#000; }
@@ -3658,7 +3661,7 @@ html, body { height:100%; overflow:hidden; background:#000; }
 <body>
 <div class="topo">
   <a href="/inicio" class="voltar">&#8592;</a>
-  <span class="titulo-topo">JarvisWEB</span>
+  <span class="titulo-topo">Social CPA</span>
   {botao_engrenagem}
 </div>
 <div class="container">
@@ -3679,7 +3682,7 @@ html, body { height:100%; overflow:hidden; background:#000; }
 </div>
 <div class="nav-inferior">
   <div class="nav-item nav-mais" onclick="abrirModalPostar()">+</div>
-  <a href="/painel" class="nav-item"><img class="nav-icone" src="{icone_jarvis_nav}"><span>Jarvis</span></a>
+  <a href="/painel" class="nav-item"><img class="nav-icone" src="{icone_jarvis_nav}"><span>CHAT CPA</span></a>
   <a href="/perfil/{usuario}" class="nav-item"><img class="nav-icone" src="{avatar_usuario_nav}"><span>Perfil</span></a>
 </div>
 <div class="lightbox" id="lightbox" onclick="fecharLightbox()">
@@ -3956,7 +3959,7 @@ carregarFeed();
 PAGINA_PERFIL = """
 <!DOCTYPE html>
 <html lang="pt-BR"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>{nome_usuario} - JarvisWEB</title>
+<title>{nome_usuario} - Social CPA</title>
 <style>
 """ + ESTILO_COMUM + """
 body { height:100vh; overflow-y:auto; }
@@ -4037,7 +4040,7 @@ async function mudarId() {
 PAGINA_SUPORTE = """
 <!DOCTYPE html>
 <html lang="pt-BR"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Suporte - Jarvis</title>
+<title>Suporte - CHAT CPA</title>
 <style>
 """ + ESTILO_COMUM + """
 html, body { height:100dvh; }
@@ -4055,7 +4058,7 @@ body { display:flex; flex-direction:column; overflow:hidden; }
 .mensagens-suporte { flex:1; overflow-y:auto; padding:16px; display:flex; flex-direction:column; gap:10px; min-height:0; }
 .vazio-chat { flex:1; display:flex; align-items:center; justify-content:center; color:#666; font-size:13px; text-align:center; padding:0 30px; }
 .msg-s { max-width:75%; padding:10px 14px; border-radius:14px; font-size:14px; line-height:1.4; }
-.msg-s.eu { align-self:flex-end; background:#1f6feb33; border:1px solid #1f6feb55; border-bottom-right-radius:4px; }
+.msg-s.eu { align-self:flex-end; background:#3ddc6a33; border:1px solid #3ddc6a55; border-bottom-right-radius:4px; }
 .msg-s.outro { align-self:flex-start; background:#0d0d0d; border:1px solid #ffffff22; border-bottom-left-radius:4px; }
 .msg-s .remetente-nome { display:block; font-size:11px; color:#888; margin-bottom:3px; }
 .area-input-suporte { flex-shrink:0; padding:12px 14px calc(12px + env(safe-area-inset-bottom)); border-top:1px solid #ffffff22; display:flex; gap:8px; }
@@ -4212,7 +4215,7 @@ if (ehAgente) {
 PAGINA_BLOQUEADO = """
 <!DOCTYPE html>
 <html lang="pt-BR"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Jarvis</title><style>""" + ESTILO_COMUM + """
+<title>CHAT CPA</title><style>""" + ESTILO_COMUM + """
 body { height:100vh; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:24px; }
 .icone-bloqueio { font-size:48px; margin-bottom:16px; }
 h2 { margin:0 0 10px; }
@@ -4220,17 +4223,17 @@ p { color:#999; max-width:340px; }
 a { color:#fff; margin-top:18px; text-decoration:underline; }
 </style></head><body>
 <div class="icone-bloqueio">&#128683;</div>
-<h2>Conta bloqueada no JarvisZap</h2>
-<p>O bot do Jarvis identificou envios repetidos de conteudo proibido (pornografia, conteudo adulto ou conteudo de terror/ameaca) e bloqueou esta conta para o JarvisZap. Se acha que foi um engano, abra um chamado no Suporte.</p>
+<h2>Conta bloqueada no ZAP</h2>
+<p>O bot do CHAT CPA identificou envios repetidos de conteudo proibido (pornografia, conteudo adulto ou conteudo de terror/ameaca) e bloqueou esta conta para o ZAP. Se acha que foi um engano, abra um chamado no Suporte.</p>
 <a href="/suporte">Ir para o Suporte</a><br><a href="/inicio">Voltar ao inicio</a>
 </body></html>
 """
 
-# ---------- JARVISZAP ----------
+# ---------- ZAP ----------
 PAGINA_ZAP = """
 <!DOCTYPE html>
 <html lang="pt-BR"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>JarvisZap</title>
+<title>ZAP</title>
 <style>
 """ + ESTILO_COMUM + """
 body { display:flex; height:100vh; overflow:hidden; }
@@ -4254,7 +4257,7 @@ body { display:flex; height:100vh; overflow:hidden; }
 .badge-cripto.ativo { display:inline-block; }
 .msgs-zap { flex:1; overflow-y:auto; padding:18px; display:flex; flex-direction:column; gap:10px; }
 .bolha { max-width:65%; padding:10px 14px; border-radius:12px; line-height:1.4; font-size:14px; position:relative; }
-.bolha.minha { align-self:flex-end; background:#1f6feb33; border:1px solid #1f6feb55; }
+.bolha.minha { align-self:flex-end; background:#3ddc6a33; border:1px solid #3ddc6a55; }
 .bolha.dele { align-self:flex-start; background:#0d0d0d; border:1px solid #ffffff22; }
 .bolha.sistema { align-self:center; background:transparent; color:#888; font-size:12px; border:none; }
 .bolha img, .bolha video { max-width:220px; border-radius:8px; margin-top:4px; display:block; }
@@ -4290,7 +4293,7 @@ body { display:flex; height:100vh; overflow:hidden; }
 </style></head>
 <body>
 <div class="sidebar-zap" id="sidebarZap">
-  <div class="topo-zap-lista"><a href="/inicio">&#8592;</a><b>JarvisZap</b><span class="btn-add-contato" onclick="menuAdicionar()">+</span></div>
+  <div class="topo-zap-lista"><a href="/inicio">&#8592;</a><b>ZAP</b><span class="btn-add-contato" onclick="menuAdicionar()">+</span></div>
   <div class="lista-contatos" id="listaContatos"><div class="vazio-contatos">Carregando...</div></div>
   <div style="padding:10px 14px;border-top:1px solid #ffffff1a;">
     <div class="item-contato" style="padding:8px 0;cursor:pointer;color:#888;" onclick="window.location.href='/zap/grupos'">&#128101; Meus grupos</div>
@@ -4446,7 +4449,7 @@ async function enviarArquivo(input, tipo) {
 }
 
 async function denunciarMensagem(id) {
-    if (!confirm("Denunciar esta mensagem para o bot do Jarvis analisar?")) return;
+    if (!confirm("Denunciar esta mensagem para o bot do CHAT CPA analisar?")) return;
     await fetch("/zap/denunciar", { method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({mensagem_id: id}) });
     alert("Denuncia enviada.");
 }
@@ -4726,11 +4729,11 @@ setInterval(verificarChamadaEntrando, 2500);
 </body></html>
 """
 
-# ---------- GRUPOS DO JARVISZAP ----------
+# ---------- GRUPOS DO ZAP ----------
 PAGINA_ZAP_GRUPOS = """
 <!DOCTYPE html>
 <html lang="pt-BR"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Grupos - JarvisZap</title>
+<title>Grupos - ZAP</title>
 <style>
 """ + ESTILO_COMUM + """
 .topo { padding:16px; border-bottom:1px solid #ffffff22; display:flex; align-items:center; gap:12px; font-weight:bold; }
@@ -4745,7 +4748,7 @@ PAGINA_ZAP_GRUPOS = """
 .item-grupo img { width:38px; height:38px; border-radius:50%; object-fit:cover; background:#1a1a1a; }
 </style></head>
 <body>
-<div class="topo"><a href="/zap">&#8592;</a>Grupos do JarvisZap</div>
+<div class="topo"><a href="/zap">&#8592;</a>Grupos do ZAP</div>
 <div class="container">
   <div class="caixa-grupo">
     <b>Criar grupo</b>
@@ -4787,7 +4790,7 @@ carregarGrupos();
 PAGINA_ZAP_GRUPO_CHAT = """
 <!DOCTYPE html>
 <html lang="pt-BR"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>{nome_grupo} - JarvisZap</title>
+<title>{nome_grupo} - ZAP</title>
 <style>
 """ + ESTILO_COMUM + """
 body { display:flex; flex-direction:column; height:100vh; }
@@ -4795,7 +4798,7 @@ body { display:flex; flex-direction:column; height:100vh; }
 .topo-chat a { color:#fff; text-decoration:none; font-size:18px; }
 .msgs-zap { flex:1; overflow-y:auto; padding:18px; display:flex; flex-direction:column; gap:10px; }
 .bolha { max-width:70%; padding:10px 14px; border-radius:12px; line-height:1.4; font-size:14px; }
-.bolha.minha { align-self:flex-end; background:#1f6feb33; border:1px solid #1f6feb55; }
+.bolha.minha { align-self:flex-end; background:#3ddc6a33; border:1px solid #3ddc6a55; }
 .bolha.dele { align-self:flex-start; background:#0d0d0d; border:1px solid #ffffff22; }
 .bolha .remetente { font-size:11px; color:#888; margin-bottom:2px; }
 .area-input-zap { padding:12px 16px calc(12px + env(safe-area-inset-bottom)); border-top:1px solid #ffffff22; display:flex; gap:8px; }
@@ -4817,7 +4820,7 @@ body { display:flex; flex-direction:column; height:100vh; }
 .linha-membro-grupo { display:flex; align-items:center; gap:8px; padding:8px 0; border-bottom:1px solid #ffffff14; }
 .linha-membro-grupo img { width:30px; height:30px; border-radius:50%; object-fit:cover; background:#1a1a1a; }
 .linha-membro-grupo .nome-membro { flex:1; }
-.linha-membro-grupo .tag-admin-membro { font-size:10px; color:#5be6ff; margin-left:6px; }
+.linha-membro-grupo .tag-admin-membro { font-size:10px; color:#3ddc6a; margin-left:6px; }
 .linha-membro-grupo button { background:#1a1a1a; border:1px solid #ffffff22; color:#f2f2f2; font-size:11px; padding:5px 8px; border-radius:6px; cursor:pointer; margin-left:4px; }
 .adicionar-membro-grupo { display:flex; gap:8px; margin:12px 0; }
 .adicionar-membro-grupo input { flex:1; padding:9px; border-radius:8px; border:1px solid #ffffff22; background:#000; color:#f2f2f2; font-size:13px; }
@@ -4940,11 +4943,11 @@ setInterval(carregarMsgsGrupo, 4000);
 </body></html>
 """
 
-# ---------- JARVIS EXTENSAO (chat focado em gerar codigo) ----------
+# ---------- CPA CODES (chat focado em gerar codigo) ----------
 PAGINA_EXTENSAO = """
 <!DOCTYPE html>
 <html lang="pt-BR"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Jarvis Extensao</title>
+<title>CPA Codes</title>
 <style>
 """ + ESTILO_COMUM + """
 body { display:flex; flex-direction:column; height:100vh; overflow:hidden; }
@@ -4962,7 +4965,7 @@ body { display:flex; flex-direction:column; height:100vh; overflow:hidden; }
 .area-input-ext button { padding:14px 18px; border-radius:8px; border:none; background:#ffffff; color:#000; font-weight:bold; cursor:pointer; }
 </style></head>
 <body>
-<div class="topo-ext"><a href="/inicio">&#8592;</a><b>Jarvis Extensao</b>
+<div class="topo-ext"><a href="/inicio">&#8592;</a><b>CPA Codes</b>
   <select class="seletor-linguagem" id="linguagem">
     <option value="qualquer linguagem apropriada">Auto</option>
     <option value="Python">Python</option>
@@ -5058,7 +5061,7 @@ def auth_enviar_codigo():
     if not email_esta_configurado():
         # Nem Resend nem SMTP configurados: nem tenta mandar, ja responde com o
         # codigo de teste na hora para a pessoa nao ficar travada na tela de login.
-        print(f"[JARVIS] (email nao configurado) codigo para {email}: {codigo}")
+        print(f"[CHAT CPA] (email nao configurado) codigo para {email}: {codigo}")
         return jsonify({"ok": True, "codigo_teste": codigo})
     # Dispara o envio numa thread, mas espera alguns segundos por ela: se o SMTP
     # falhar rapido (senha errada, porta bloqueada pelo host, etc.) a pessoa fica
@@ -5210,15 +5213,15 @@ def inicio():
     pagina = pagina.replace("{qtd_online}", str(contar_online()))
     pagina = pagina.replace("{qtd_contas}", str(contar_contas()))
 
-    def icone_img(chave, letra):
-        url = obter_config(chave)
+    def icone_img(chave, letra, padrao=None):
+        url = obter_config(chave) or padrao
         return f'<img src="{url}">' if url else letra
 
-    pagina = pagina.replace("{icone_jarvisweb}", icone_img("icone_jarvisweb", "W"))
-    pagina = pagina.replace("{icone_jarvis}", icone_img("icone_jarvis", "J"))
+    pagina = pagina.replace("{icone_jarvisweb}", icone_img("icone_jarvisweb", "S"))
+    pagina = pagina.replace("{icone_jarvis}", icone_img("icone_jarvis", "C", "/static/logo.jpg"))
     pagina = pagina.replace("{icone_zap}", icone_img("icone_zap", "Z"))
     pagina = pagina.replace("{icone_suporte}", icone_img("icone_suporte", "S"))
-    pagina = pagina.replace("{icone_app_url}", obter_config("icone_app", AVATAR_PADRAO + "jarvisapp"))
+    pagina = pagina.replace("{icone_app_url}", obter_config("icone_app", "/static/logo.jpg"))
     return pagina
 
 
@@ -5240,10 +5243,10 @@ def favicon():
 
 @app.route("/manifest.json")
 def manifest_json():
-    icone = obter_config("icone_app", AVATAR_PADRAO + "jarvisapp")
+    icone = obter_config("icone_app", "/static/logo.jpg")
     manifest = {
-        "name": "Jarvis",
-        "short_name": "Jarvis",
+        "name": "CHAT CPA",
+        "short_name": "CHAT CPA",
         "start_url": "/inicio",
         "scope": "/",
         "display": "standalone",
@@ -5270,7 +5273,7 @@ def service_worker():
 PAGINA_BAIXAR = """
 <!DOCTYPE html>
 <html lang="pt-BR"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Baixar o Jarvis</title>
+<title>Baixar o CHAT CPA</title>
 <link rel="manifest" href="/manifest.json">
 <meta name="theme-color" content="#000000">
 <link rel="apple-touch-icon" href="{icone_app_url}">
@@ -5287,8 +5290,8 @@ button.principal { margin-top:20px; padding:14px 26px; border-radius:12px; borde
 </style></head>
 <body>
 <img class="icone-grande" src="{icone_app_url}">
-<h2>Instalar o Jarvis</h2>
-<p>Instale o Jarvis na tela inicial do seu celular pra abrir como um app, sem precisar do navegador.</p>
+<h2>Instalar o CHAT CPA</h2>
+<p>Instale o CHAT CPA na tela inicial do seu celular pra abrir como um app, sem precisar do navegador.</p>
 <button class="principal" id="botaoInstalar" style="display:none;" onclick="instalarApp()">Instalar agora</button>
 <div class="passos" id="passosIOS" style="display:none;">
   <b>No iPhone (Safari):</b><br>
@@ -5327,7 +5330,7 @@ if (ehIOS) document.getElementById('passosIOS').style.display = 'block';
 def baixar():
     if not session.get("usuario"):
         return redirect(url_for("login"))
-    icone = obter_config("icone_app", AVATAR_PADRAO + "jarvisapp")
+    icone = obter_config("icone_app", "/static/logo.jpg")
     return PAGINA_BAIXAR.replace("{icone_app_url}", icone)
 
 
@@ -5436,7 +5439,7 @@ def rede():
               <button onclick="mudarAbaAdmin('tags', this)">Tags</button>
               <button onclick="mudarAbaAdmin('icones', this)">Icones</button>
               <button onclick="mudarAbaAdmin('ids', this)">IDs</button>
-              <button onclick="mudarAbaAdmin('zap', this)">JarvisZap</button>
+              <button onclick="mudarAbaAdmin('zap', this)">ZAP</button>
             </div>
 
             <div class="painel-admin-secao ativa" id="secaoAdmin-selo">
@@ -5475,9 +5478,9 @@ def rede():
             <div class="painel-admin-secao" id="secaoAdmin-icones">
               Icone de cada app (aparece na tela inicial e nos apps):
               <div class="lista-icones">
-                <div class="item-icone"><img id="previaIconeJarvis" src="{icone_jarvis}"><input type="file" accept="image/*" id="arqIconeJarvis" style="display:none" onchange="enviarConfig('icone_jarvis','arqIconeJarvis','resultadoIcones',this)"><button class="acao" style="padding:4px 8px;font-size:10px;" onclick="document.getElementById('arqIconeJarvis').click()">Jarvis</button></div>
-                <div class="item-icone"><img id="previaIconeJarvisweb" src="{icone_jarvisweb}"><input type="file" accept="image/*" id="arqIconeJarvisweb" style="display:none" onchange="enviarConfig('icone_jarvisweb','arqIconeJarvisweb','resultadoIcones',this)"><button class="acao" style="padding:4px 8px;font-size:10px;" onclick="document.getElementById('arqIconeJarvisweb').click()">JarvisWEB</button></div>
-                <div class="item-icone"><img id="previaIconeZap" src="{icone_zap}"><input type="file" accept="image/*" id="arqIconeZap" style="display:none" onchange="enviarConfig('icone_zap','arqIconeZap','resultadoIcones',this)"><button class="acao" style="padding:4px 8px;font-size:10px;" onclick="document.getElementById('arqIconeZap').click()">JarvisZap</button></div>
+                <div class="item-icone"><img id="previaIconeChatCpa" src="{icone_jarvis}"><input type="file" accept="image/*" id="arqIconeChatCpa" style="display:none" onchange="enviarConfig('icone_jarvis','arqIconeChatCpa','resultadoIcones',this)"><button class="acao" style="padding:4px 8px;font-size:10px;" onclick="document.getElementById('arqIconeChatCpa').click()">CHAT CPA</button></div>
+                <div class="item-icone"><img id="previaIconeChatCpaWeb" src="{icone_jarvisweb}"><input type="file" accept="image/*" id="arqIconeChatCpaWeb" style="display:none" onchange="enviarConfig('icone_jarvisweb','arqIconeChatCpaWeb','resultadoIcones',this)"><button class="acao" style="padding:4px 8px;font-size:10px;" onclick="document.getElementById('arqIconeChatCpaWeb').click()">Social CPA</button></div>
+                <div class="item-icone"><img id="previaIconeZap" src="{icone_zap}"><input type="file" accept="image/*" id="arqIconeZap" style="display:none" onchange="enviarConfig('icone_zap','arqIconeZap','resultadoIcones',this)"><button class="acao" style="padding:4px 8px;font-size:10px;" onclick="document.getElementById('arqIconeZap').click()">ZAP</button></div>
                 <div class="item-icone"><img id="previaIconeSuporte" src="{icone_suporte}"><input type="file" accept="image/*" id="arqIconeSuporte" style="display:none" onchange="enviarConfig('icone_suporte','arqIconeSuporte','resultadoIcones',this)"><button class="acao" style="padding:4px 8px;font-size:10px;" onclick="document.getElementById('arqIconeSuporte').click()">Suporte</button></div>
                 <div class="item-icone"><img id="previaIconeApp" src="{icone_app}"><input type="file" accept="image/*" id="arqIconeApp" style="display:none" onchange="enviarConfig('icone_app','arqIconeApp','resultadoIcones',this)"><button class="acao" style="padding:4px 8px;font-size:10px;" onclick="document.getElementById('arqIconeApp').click()">Icone do app (instalar)</button></div>
               </div>
@@ -5526,7 +5529,7 @@ def rede():
             .replace("{icone_jarvisweb}", obter_config("icone_jarvisweb", AVATAR_PADRAO + "jarvisweb"))
             .replace("{icone_zap}", obter_config("icone_zap", AVATAR_PADRAO + "jarviszap"))
             .replace("{icone_suporte}", obter_config("icone_suporte", AVATAR_PADRAO + "suporte"))
-            .replace("{icone_app}", obter_config("icone_app", AVATAR_PADRAO + "jarvisapp"))
+            .replace("{icone_app}", obter_config("icone_app", "/static/logo.jpg"))
         )
     linha_usuario = buscar_usuario(usuario)
     avatar_usuario = (linha_usuario["foto_perfil"] if linha_usuario and linha_usuario["foto_perfil"] else AVATAR_PADRAO + usuario)
@@ -6080,7 +6083,7 @@ def suporte_responder():
     return jsonify({"ok": True})
 
 
-# ================= ROTAS DO JARVISZAP =================
+# ================= ROTAS DO ZAP =================
 
 @app.route("/zap")
 def zap():
@@ -6184,7 +6187,7 @@ def ativar_criptografia(conversa, usuario, frase):
         "ON CONFLICT(conversa) DO UPDATE SET frase_cripto = excluded.frase_cripto, ativada_por = excluded.ativada_por",
         (conversa, frase, usuario, datetime.now().isoformat()),
     )
-    aviso = f"&#128274; {usuario} ativou a criptografia desta conversa. O bot do Jarvis vai cifrar as mensagens de texto a partir de agora."
+    aviso = f"&#128274; {usuario} ativou a criptografia desta conversa. O bot do CHAT CPA vai cifrar as mensagens de texto a partir de agora."
     conexao.execute(
         "INSERT INTO zap_mensagens (conversa, remetente, destinatario, tipo, conteudo, criptografado, criado_em) VALUES (?, 'jarvis', ?, 'sistema', ?, 0, ?)",
         (conversa, conversa, aviso, datetime.now().isoformat()),
@@ -6269,7 +6272,7 @@ def zap_enviar():
     usuario = session["usuario"]
     linha_usuario = buscar_usuario(usuario)
     if linha_usuario and linha_usuario["bloqueado"]:
-        return jsonify({"ok": False, "bloqueado": True, "erro": "Sua conta esta bloqueada no JarvisZap."})
+        return jsonify({"ok": False, "bloqueado": True, "erro": "Sua conta esta bloqueada no ZAP."})
     dados = request.get_json() or {}
     contato = (dados.get("contato") or "").strip()
     tipo = dados.get("tipo", "texto")
@@ -6288,15 +6291,15 @@ def zap_enviar():
         if mensagem_contem_conteudo_proibido(conteudo):
             avisos, bloqueado = aplicar_moderacao(usuario)
             conexao = obter_bd()
-            aviso = ("O bot do Jarvis bloqueou esta mensagem por conter conteudo proibido (adulto/+18 ou de terror/ameaca). "
-                     f"Aviso {avisos}/3." + (" Conta bloqueada no JarvisZap." if bloqueado else ""))
+            aviso = ("O bot do CHAT CPA bloqueou esta mensagem por conter conteudo proibido (adulto/+18 ou de terror/ameaca). "
+                     f"Aviso {avisos}/3." + (" Conta bloqueada no ZAP." if bloqueado else ""))
             conexao.execute(
                 "INSERT INTO zap_mensagens (conversa, remetente, destinatario, tipo, conteudo, criptografado, criado_em) VALUES (?, 'jarvis', ?, 'sistema', ?, 0, ?)",
                 (conversa, conversa, aviso, datetime.now().isoformat()),
             )
             conexao.commit()
             conexao.close()
-            return jsonify({"ok": False, "erro": "Mensagem bloqueada pelo bot do Jarvis.", "bloqueado": bloqueado})
+            return jsonify({"ok": False, "erro": "Mensagem bloqueada pelo bot do CHAT CPA.", "bloqueado": bloqueado})
 
     conexao = obter_bd()
     conversa_info = conexao.execute("SELECT frase_cripto FROM zap_conversas WHERE conversa = ?", (conversa,)).fetchone()
@@ -6322,7 +6325,7 @@ def zap_enviar_arquivo():
     usuario = session["usuario"]
     linha_usuario = buscar_usuario(usuario)
     if linha_usuario and linha_usuario["bloqueado"]:
-        return jsonify({"ok": False, "bloqueado": True, "erro": "Sua conta esta bloqueada no JarvisZap."})
+        return jsonify({"ok": False, "bloqueado": True, "erro": "Sua conta esta bloqueada no ZAP."})
     contato = (request.form.get("contato") or "").strip()
     tipo = request.form.get("tipo", "imagem")
     alvo = buscar_usuario(contato)
@@ -6331,7 +6334,7 @@ def zap_enviar_arquivo():
         return jsonify({"ok": False, "erro": "Dados invalidos."})
     if usuario_bloqueou(usuario, alvo["usuario"]):
         return jsonify({"ok": False, "erro": "Voce nao pode enviar mensagem para este contato (bloqueado)."})
-    # Aviso: o bot do Jarvis ainda nao analisa o CONTEUDO de imagens/audios/videos
+    # Aviso: o bot do CHAT CPA ainda nao analisa o CONTEUDO de imagens/audios/videos
     # (isso exigiria um servico externo de moderacao de midia). Por enquanto, a
     # protecao para midia e o botao "Denunciar", que bloqueia a conta apos varias
     # denuncias confirmadas (veja /zap/denunciar).
@@ -6814,10 +6817,10 @@ def admin_zap_verificar_grupo():
     return jsonify({"ok": True, "verificado": bool(novo_estado)})
 
 
-# ================= ROTAS DO JARVIS EXTENSAO =================
+# ================= ROTAS DO CPA CODES =================
 
 SISTEMA_EXTENSAO = (
-    "Voce e o Jarvis em Modo Extensao, um assistente de programacao. "
+    "Voce e o CPA Codes, um assistente de programacao. "
     "Gere codigo limpo e funcional (Python, Java, JavaScript, C# ou o que for pedido), sempre dentro de blocos "
     "de codigo cercados por crases triplas com o nome da linguagem (ex: ```python). "
     "Antes do bloco, explique em 1-2 frases curtas o que o codigo faz. Responda em portugues do Brasil."
