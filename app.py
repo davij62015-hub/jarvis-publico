@@ -18,6 +18,7 @@ import smtplib
 import ssl
 import threading
 import queue
+import time
 from email.mime.text import MIMEText
 from datetime import datetime, timedelta
 from flask import Flask, request, jsonify, session, redirect, url_for, send_file
@@ -89,7 +90,7 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 def _chat_groq(modelo, mensagens_completas):
     if not _cliente:
         raise RuntimeError("Groq nao configurado")
-    resposta = _cliente.chat.completions.create(model=modelo, messages=mensagens_completas, max_tokens=500)
+    resposta = _cliente.chat.completions.create(model=modelo, messages=mensagens_completas, max_tokens=500, timeout=15)
     return resposta.choices[0].message.content
 
 
@@ -102,7 +103,7 @@ def _chat_http_openai_compat(url, chave, modelo, mensagens_completas):
         url,
         headers={"Authorization": f"Bearer {chave}", "Content-Type": "application/json"},
         json={"model": modelo, "messages": mensagens_completas, "max_tokens": 500},
-        timeout=20,
+        timeout=15,
     )
     resposta.raise_for_status()
     return resposta.json()["choices"][0]["message"]["content"]
@@ -126,7 +127,7 @@ def _chat_gemini(mensagens_completas):
         "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
         headers={"Content-Type": "application/json", "x-goog-api-key": GEMINI_API_KEY},
         json=corpo,
-        timeout=20,
+        timeout=15,
     )
     resposta.raise_for_status()
     return resposta.json()["candidates"][0]["content"]["parts"][0]["text"]
@@ -158,15 +159,23 @@ def gerar_resposta_ia(mensagens_completas):
     for t in threads:
         t.start()
     erros = []
+    prazo_final = time.monotonic() + 17  # prazo TOTAL da corrida, nao por provedor - evita que varios
+    # travamentos em sequencia somem e deixem a pessoa esperando muito mais que isso.
     for _ in range(len(provedores)):
-        status, nome, valor = resultados.get(timeout=25)
+        tempo_restante = prazo_final - time.monotonic()
+        if tempo_restante <= 0:
+            break
+        try:
+            status, nome, valor = resultados.get(timeout=tempo_restante)
+        except queue.Empty:
+            break
         if status == "ok":
             if erros:
                 print(f"[CHAT CPA] '{nome}' venceu a corrida (outras ainda rodando/falharam: {[e[0] for e in erros]})")
             return valor
         erros.append((nome, valor))
         print(f"[CHAT CPA] provedor de texto '{nome}' falhou: {valor}")
-    raise RuntimeError(f"Todas as IAs de texto falharam. Erros: {erros}")
+    raise RuntimeError(f"Todas as IAs de texto falharam ou demoraram demais. Erros: {erros}")
 
 
 # ---------- Varias IAs de imagem gratuitas, em cascata ----------
@@ -217,8 +226,15 @@ def gerar_imagem_bytes(prompt_melhorado, seed):
     threads = [threading.Thread(target=_rodar, args=(nome, chamada), daemon=True) for nome, chamada in provedores]
     for t in threads:
         t.start()
+    prazo_final = time.monotonic() + 27
     for _ in range(len(provedores)):
-        status, nome, valor = resultados.get(timeout=32)
+        tempo_restante = prazo_final - time.monotonic()
+        if tempo_restante <= 0:
+            break
+        try:
+            status, nome, valor = resultados.get(timeout=tempo_restante)
+        except queue.Empty:
+            break
         if status == "ok":
             return valor
         print(f"[CHAT CPA] provedor de imagem '{nome}' falhou: {valor}")
@@ -478,6 +494,15 @@ def eh_desenvolvedor(nome_usuario):
         return True
     linha = buscar_usuario(nome_usuario)
     return bool(linha and linha["email"] and linha["email"].strip().lower() == EMAIL_DONO.lower())
+
+
+def salvar_bytes_imagem(conteudo, extensao="jpg"):
+    """Salva bytes de imagem (ja gerados/baixados) direto no disco local e devolve
+    a URL. Usado pelas imagens geradas por IA, que ja chegam como bytes prontos."""
+    nome_unico = f"{uuid.uuid4().hex}.{extensao}"
+    with open(os.path.join(PASTA_UPLOADS, nome_unico), "wb") as f:
+        f.write(conteudo)
+    return f"/static/uploads/{nome_unico}"
 
 
 def salvar_arquivo_enviado(arquivo):
@@ -3562,9 +3587,13 @@ function adicionarCarregandoImagem(texto) {
 }
 
 async function pedirResposta(mensagem) {
-    const resposta = await fetch("/chat", { method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({mensagem}) });
-    const dados = await resposta.json();
-    return dados.resposta;
+    try {
+        const resposta = await fetch("/chat", { method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({mensagem}) });
+        const dados = await resposta.json();
+        return dados.resposta || "Nao consegui responder agora, tenta de novo.";
+    } catch (erro) {
+        return "Falha de conexao. Verifica sua internet e tenta de novo.";
+    }
 }
 
 async function enviarTexto() {
@@ -3586,9 +3615,17 @@ async function gerarImagem() {
     adicionarMensagem("usuario", "Gerar imagem: " + prompt);
     campo.value = "";
     const carregando = adicionarCarregandoImagem("Criando imagem...");
-    const resposta = await fetch("/imagem?prompt=" + encodeURIComponent(prompt));
-    const dados = await resposta.json();
+    let dados;
+    try {
+        const resposta = await fetch("/imagem?prompt=" + encodeURIComponent(prompt));
+        dados = await resposta.json();
+    } catch (erro) {
+        carregando.remove();
+        adicionarMensagem("jarvis", "Falha de conexao ao gerar a imagem. Tenta de novo.");
+        return;
+    }
     carregando.remove();
+    if (!dados.url) { adicionarMensagem("jarvis", dados.erro || "Nao consegui gerar a imagem, tenta de novo."); return; }
     const img = new Image();
     img.onload = () => adicionarMensagem("jarvis", "Aqui esta:<br><img src='" + dados.url + "'>");
     img.onerror = () => adicionarMensagem("jarvis", "Nao consegui gerar a imagem, tenta de novo.");
@@ -5507,8 +5544,6 @@ def logout():
 def chat():
     if not session.get("usuario"):
         return jsonify({"resposta": "Sessao expirada, faca login novamente."}), 401
-    if not _cliente:
-        return jsonify({"resposta": "Chave da IA nao configurada no servidor."})
     dados = request.get_json()
     mensagem = dados.get("mensagem", "").strip()
     if not mensagem:
@@ -5518,12 +5553,14 @@ def chat():
     conexao.execute("INSERT INTO mensagens (usuario, remetente, texto, criado_em) VALUES (?, ?, ?, ?)", (usuario, "usuario", mensagem, datetime.now().isoformat()))
     linhas = conexao.execute("SELECT remetente, texto FROM mensagens WHERE usuario = ? ORDER BY id DESC LIMIT 12", (usuario,)).fetchall()
     historico_mensagens = [{"role": "user" if l["remetente"] == "usuario" else "assistant", "content": l["texto"]} for l in reversed(linhas)]
-    resposta = _cliente.chat.completions.create(
-        model="llama-3.3-70b-versatile",
-        messages=[{"role": "system", "content": SISTEMA}] + historico_mensagens,
-        max_tokens=500,
-    )
-    texto_resposta = resposta.choices[0].message.content
+    try:
+        # Corrida entre todas as IAs de texto configuradas (Groq, Cerebras, OpenRouter,
+        # Gemini) - usa a que responder primeiro, em vez de depender so da Groq.
+        texto_resposta = gerar_resposta_ia([{"role": "system", "content": SISTEMA}] + historico_mensagens)
+    except Exception as erro:
+        conexao.close()
+        print(f"[CHAT CPA] todas as IAs de texto falharam no /chat: {erro}")
+        return jsonify({"resposta": "As IAs gratuitas estao indisponiveis no momento, tenta de novo em instantes."})
     conexao.execute("INSERT INTO mensagens (usuario, remetente, texto, criado_em) VALUES (?, ?, ?, ?)", (usuario, "jarvis", texto_resposta, datetime.now().isoformat()))
     conexao.commit()
     conexao.close()
@@ -5539,7 +5576,14 @@ def imagem():
         return jsonify({"url": ""})
     prompt_melhorado = prompt + ", highly detailed, professional quality, sharp focus, 4k"
     seed = random.randint(1, 999999)
-    url = "https://image.pollinations.ai/prompt/" + urllib.parse.quote(prompt_melhorado) + f"?model=flux&width=1024&height=1024&seed={seed}&nologo=true"
+    # Usa a corrida entre Pollinations e Hugging Face (gerar_imagem_bytes) em vez de
+    # so montar um link do Pollinations pro navegador buscar sozinho - assim o
+    # Hugging Face (se a chave estiver configurada) tambem entra na disputa, e a
+    # imagem so volta pro app depois de confirmada (sem risco de link quebrado).
+    conteudo = gerar_imagem_bytes(prompt_melhorado, seed)
+    if not conteudo:
+        return jsonify({"url": "", "erro": "Nao consegui gerar a imagem agora. Tenta de novo."})
+    url = salvar_bytes_imagem(conteudo, "jpg")
     return jsonify({"url": url})
 
 
