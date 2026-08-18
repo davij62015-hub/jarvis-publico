@@ -7,7 +7,7 @@ NAO tem nenhum comando de controle de PC.
 import os
 import io
 import json
-import qlite3
+import sqlite3
 import urllib.parse
 import urllib.request
 import random
