@@ -181,42 +181,30 @@ def gerar_resposta_ia(mensagens_completas):
 
 
 # ---------- Varias IAs de imagem gratuitas, em cascata ----------
-# Igual ao texto: se a Pollinations demorar demais ou cair, tenta o Hugging Face
-# (precisa de HF_API_KEY gratuita em huggingface.co/settings/tokens).
+# A Hugging Face parou de servir modelos de imagem tipo FLUX no plano gratuito via
+# chamada HTTP simples (o endpoint devolve 410 - Gone), entao ela saiu da corrida.
+# Fica so com a Pollinations mesmo (que continua gratuita e ilimitada), mas com um
+# prazo maior, porque imagem realista demora mais que os 25s que tinha antes.
 HF_API_KEY = os.environ.get("HF_API_KEY", "")
 
 
 def gerar_imagem_bytes(prompt_melhorado, seed):
-    """Dispara Pollinations e Hugging Face (se configurado) ao mesmo tempo e fica
-    com a primeira imagem valida que chegar - assim a demora vira a da mais rapida
-    das duas, nao a soma (uma esperar a outra falhar/dar timeout pra so entao tentar
-    a proxima)."""
-    def _pollinations():
+    def _pollinations(modelo="flux"):
         url_pollinations = (
             "https://image.pollinations.ai/prompt/" + urllib.parse.quote(prompt_melhorado)
-            + f"?model=flux&width=1024&height=1024&seed={seed}&nologo=true"
+            + f"?model={modelo}&width=1024&height=1024&seed={seed}&nologo=true"
         )
-        resposta = requests.get(url_pollinations, timeout=25)
+        resposta = requests.get(url_pollinations, timeout=55)
         if resposta.status_code == 200 and resposta.content and resposta.headers.get("content-type", "").startswith("image"):
             return resposta.content
-        raise RuntimeError(f"Pollinations respondeu sem imagem valida (status {resposta.status_code})")
-
-    def _hugging_face():
-        if not HF_API_KEY:
-            raise RuntimeError("Hugging Face nao configurado")
-        resposta = requests.post(
-            "https://router.huggingface.co/hf-inference/models/black-forest-labs/FLUX.1-schnell",
-            headers={"Authorization": f"Bearer {HF_API_KEY}"},
-            json={"inputs": prompt_melhorado},
-            timeout=30,
-        )
-        if resposta.status_code == 200 and resposta.headers.get("content-type", "").startswith("image"):
-            return resposta.content
-        raise RuntimeError(f"Hugging Face respondeu sem imagem valida (status {resposta.status_code})")
+        raise RuntimeError(f"Pollinations ({modelo}) respondeu sem imagem valida (status {resposta.status_code})")
 
     if not requests:
         return None
-    provedores = [("Pollinations", _pollinations), ("Hugging Face", _hugging_face)]
+    # Dispara duas tentativas na Pollinations ao mesmo tempo com modelos diferentes
+    # (flux = mais realista, zimage = alternativa) - fica com a que responder primeiro,
+    # entao se uma travar/estiver sobrecarregada a outra ainda pode salvar a geracao.
+    provedores = [("Pollinations (flux)", lambda: _pollinations("flux")), ("Pollinations (zimage)", lambda: _pollinations("zimage"))]
     resultados = queue.Queue()
 
     def _rodar(nome, chamada):
@@ -228,7 +216,7 @@ def gerar_imagem_bytes(prompt_melhorado, seed):
     threads = [threading.Thread(target=_rodar, args=(nome, chamada), daemon=True) for nome, chamada in provedores]
     for t in threads:
         t.start()
-    prazo_final = time.monotonic() + 27
+    prazo_final = time.monotonic() + 58
     for _ in range(len(provedores)):
         tempo_restante = prazo_final - time.monotonic()
         if tempo_restante <= 0:
@@ -806,10 +794,12 @@ def selo_verificado_html(tamanho=14):
 AVATAR_PADRAO = "https://api.dicebear.com/7.x/identicon/svg?seed="
 
 ESTILO_COMUM = """
-* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; -webkit-user-select:none; -moz-user-select:none; user-select:none; -webkit-touch-callout:none; }
 html, body { height:100%; max-width:100%; overflow-x:hidden; }
 body { margin:0; font-family: 'Segoe UI', Arial, sans-serif; background:#000000; color:#f2f2f2; }
 img, video, svg { max-width:100%; }
+.botao-copiar-flutuante { position:fixed; z-index:999; background:#2a2a2a; color:#fff; padding:8px 16px; border-radius:20px; font-size:13px; font-weight:bold; box-shadow:0 4px 14px #00000088; border:1px solid #ffffff22; }
+input, textarea { -webkit-user-select:text; -moz-user-select:text; user-select:text; }
 button, .acao-lateral, .nav-inferior, .botao-seguir-lateral, .tag-badge, .item-icone, .painel-admin-abas button,
 .linha-membro-grupo button, .item-grupo, .voltar, .titulo-topo, .botao-engrenagem, .botao-info-grupo {
   -webkit-user-select:none; -moz-user-select:none; user-select:none;
@@ -3559,10 +3549,54 @@ function adicionarMensagemDOM(remetente, conteudoHtml, comAudio) {
         botaoAudio.onclick = () => falarTexto(comAudio);
         bolha.appendChild(botaoAudio);
     }
+    ativarCopiarSegurando(bolha, comAudio || bolha.textContent);
     div.appendChild(bolha);
     div.scrollTop = div.scrollHeight;
     return bolha;
 }
+
+// Segurar uma mensagem por meio segundo mostra um botaozinho "Copiar" perto do
+// dedo, igual o ChatGPT - em vez de depender da selecao de texto nativa do
+// celular (que e desligada no site inteiro porque ficava selecionando bagunçado
+// os botoes e textos da interface por engano).
+let _timerSegurar = null;
+function ativarCopiarSegurando(elemento, textoParaCopiar) {
+    const iniciar = (x, y) => {
+        _timerSegurar = setTimeout(() => mostrarBotaoCopiar(elemento, textoParaCopiar, x, y), 480);
+    };
+    const cancelar = () => { if (_timerSegurar) { clearTimeout(_timerSegurar); _timerSegurar = null; } };
+    elemento.addEventListener("touchstart", (ev) => { const t = ev.touches[0]; iniciar(t.clientX, t.clientY); }, {passive: true});
+    elemento.addEventListener("touchend", cancelar);
+    elemento.addEventListener("touchmove", cancelar);
+    elemento.addEventListener("mousedown", (ev) => iniciar(ev.clientX, ev.clientY));
+    elemento.addEventListener("mouseup", cancelar);
+    elemento.addEventListener("mouseleave", cancelar);
+}
+function mostrarBotaoCopiar(elemento, texto, x, y) {
+    document.querySelectorAll(".botao-copiar-flutuante").forEach(b => b.remove());
+    const botao = document.createElement("div");
+    botao.className = "botao-copiar-flutuante";
+    botao.textContent = "Copiar";
+    botao.style.left = Math.max(8, x - 35) + "px";
+    botao.style.top = Math.max(8, y - 46) + "px";
+    botao.onclick = async (ev) => {
+        ev.stopPropagation();
+        try {
+            await navigator.clipboard.writeText(texto);
+            botao.textContent = "Copiado!";
+        } catch (erro) {
+            botao.textContent = "Nao foi possivel copiar";
+        }
+        setTimeout(() => botao.remove(), 900);
+    };
+    document.body.appendChild(botao);
+    setTimeout(() => document.addEventListener("touchstart", function fechar(ev) {
+        if (!botao.contains(ev.target)) { botao.remove(); document.removeEventListener("touchstart", fechar); }
+    }), 50);
+    setTimeout(() => { if (botao.parentNode) botao.remove(); }, 4000);
+    if (navigator.vibrate) navigator.vibrate(15);
+}
+
 function adicionarMensagem(remetente, conteudoHtml, comAudio) {
     if (indiceAtual === -1) novaConversa();
     const bolha = adicionarMensagemDOM(remetente, conteudoHtml, comAudio);
@@ -5576,7 +5610,7 @@ def imagem():
     prompt = request.args.get("prompt", "").strip()
     if not prompt:
         return jsonify({"url": ""})
-    prompt_melhorado = prompt + ", highly detailed, professional quality, sharp focus, 4k"
+    prompt_melhorado = prompt + ", fotografia realista, ultra detalhado, iluminacao natural, textura de pele real, camera DSLR, profundidade de campo, 8k, photorealistic"
     seed = random.randint(1, 999999)
     # Usa a corrida entre Pollinations e Hugging Face (gerar_imagem_bytes) em vez de
     # so montar um link do Pollinations pro navegador buscar sozinho - assim o
