@@ -275,7 +275,7 @@ EMAIL_DONO = "samuelgomeswx2000@gmail.com"
 # depois de um tempo (veja os parametros ?ex=...&is=...&hm=... na URL). Quando
 # esse link parar de funcionar, e so trocar o valor abaixo por outro link de
 # imagem publica (ou subir a imagem para /static e usar "/static/fundo.jpg").
-FUNDO_INICIO_URL = "https://cdn.discordapp.com/attachments/1527396622336524359/1538287118911021250/1f38792ffa63762e59c32946e314626e.jpg?ex=6a822105&is=6a80cf85&hm=ac3dc688febe05554a4409abeffc4e5c54b9cbf3427d3ac5ce77f8298bf80cb5&"
+FUNDO_INICIO_URL = "https://cdn.discordapp.com/attachments/1527396622336524359/1540137847665860628/4k_OLED_Screensaver____Neon_Blue_Color_Tunnel_TV_Abstract_background_Video_meditation.jpg?ex=6a88dca5&is=6a878b25&hm=350502d3b4aaaf3e63945dc72de0fa218eb6f46952c12dc8018c475b654f725e"
 
 # ---------- ImgBB (hospedagem de imagens de perfil/posts) ----------
 IMGBB_API_KEY = os.environ.get("IMGBB_API_KEY", "")
