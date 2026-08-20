@@ -417,28 +417,6 @@ def iniciar_bd():
     conexao.execute("CREATE TABLE IF NOT EXISTS zap_bloqueios (usuario TEXT NOT NULL, bloqueado TEXT NOT NULL, criado_em TEXT NOT NULL, PRIMARY KEY (usuario, bloqueado))")
     # ---------- Configuracoes gerais (icones dos apps, selo customizado, etc) ----------
     conexao.execute("CREATE TABLE IF NOT EXISTS configuracoes (chave TEXT PRIMARY KEY, valor TEXT)")
-    # ---------- Nomes e configuracoes dos aplicativos da tela inicial ----------
-    conexao.execute("""
-        CREATE TABLE IF NOT EXISTS aplicativos (
-            slug TEXT PRIMARY KEY, nome TEXT NOT NULL, descricao TEXT DEFAULT '',
-            rota TEXT NOT NULL, icone_chave TEXT, ativo INTEGER DEFAULT 1,
-            ordem INTEGER DEFAULT 0, criado_em TEXT, atualizado_em TEXT
-        )
-    """)
-    apps_padrao = [
-        ("social", "Social CPA", "Rede social", "/rede", "icone_jarvisweb", 1, 1),
-        ("chat", "CHAT CPA", "Inteligencia artificial", "/painel", "icone_jarvis", 1, 2),
-        ("zap", "ZAP", "Mensagens e chamadas", "/zap", "icone_zap", 1, 3),
-        ("codes", "CPA Codes", "Extensao de codigo", "/extensao", None, 1, 4),
-        ("suporte", "Suporte", "Ajuda e atendimento", "/suporte", "icone_suporte", 1, 5),
-        ("baixar", "Baixar app", "Instale o aplicativo", "/baixar", None, 1, 6),
-    ]
-    agora_apps = datetime.now().isoformat()
-    for slug, nome, descricao, rota, icone_chave, ativo, ordem in apps_padrao:
-        conexao.execute(
-            "INSERT OR IGNORE INTO aplicativos (slug,nome,descricao,rota,icone_chave,ativo,ordem,criado_em,atualizado_em) VALUES (?,?,?,?,?,?,?,?,?)",
-            (slug, nome, descricao, rota, icone_chave, ativo, ordem, agora_apps, agora_apps)
-        )
     # ---------- Ligacoes de voz do ZAP (sinalizacao WebRTC via polling) ----------
     conexao.execute("""
         CREATE TABLE IF NOT EXISTS zap_chamadas (
@@ -723,30 +701,6 @@ def definir_config(chave, valor):
     )
     conexao.commit()
     conexao.close()
-
-def obter_aplicativos_inicio():
-    conexao = obter_bd()
-    linhas = conexao.execute("SELECT * FROM aplicativos WHERE ativo = 1 ORDER BY ordem ASC, nome ASC").fetchall()
-    conexao.close()
-    html = []
-    for app_info in linhas:
-        icone = ""
-        chave = app_info["icone_chave"]
-        if chave:
-            url = obter_config(chave)
-            if url:
-                icone = f'<img src="{url}">'
-        if not icone:
-            if app_info["slug"] == "codes":
-                icone = "&lt;/&gt;"
-            elif app_info["slug"] == "baixar":
-                icone = "&#8595;"
-            else:
-                icone = app_info["nome"][:1].upper()
-        nome = app_info["nome"]
-        rota = app_info["rota"]
-        html.append(f'<a class="app-icone" href="{rota}"><div class="icone-quadrado">{icone}</div>{nome}</a>')
-    return "\n  ".join(html)
 
 
 def salvar_midia_zap(arquivo):
@@ -3324,7 +3278,7 @@ body {
 </style></head>
 <body>
 <div class="status-topo">
-  <div class="marca-topo">{nome_marca}<span>CRIPTOGRAFADO PARA AJUDAR</span></div>
+  <div class="marca-topo">CHAT CPA<span>CRIPTOGRAFADO PARA AJUDAR</span></div>
   <div class="relogio" id="relogio">--:--</div>
   <div class="data" id="dataAtual"></div>
   <div class="contadores">
@@ -3333,7 +3287,12 @@ body {
   </div>
 </div>
 <div class="apps">
-  {apps_inicio}
+  <a class="app-icone" href="/rede"><div class="icone-quadrado">{icone_jarvisweb}</div>Social CPA</a>
+  <a class="app-icone" href="/painel"><div class="icone-quadrado">{icone_jarvis}</div>CHAT CPA</a>
+  <a class="app-icone" href="/zap"><div class="icone-quadrado">{icone_zap}</div>ZAP</a>
+  <a class="app-icone" href="/extensao"><div class="icone-quadrado">&lt;/&gt;</div>CPA Codes</a>
+  <a class="app-icone" href="/suporte"><div class="icone-quadrado">{icone_suporte}</div>Suporte</a>
+  <a class="app-icone" href="/baixar"><div class="icone-quadrado">&#8595;</div>Baixar app</a>
 </div>
 <div class="rodape"><span class="sair-link" onclick="location.href='/logout'">Sair da conta</span></div>
 <script>
@@ -5478,8 +5437,6 @@ def inicio():
     pagina = PAGINA_INICIO.replace("{fundo_url}", obter_config("fundo_inicio", FUNDO_INICIO_URL))
     pagina = pagina.replace("{qtd_online}", str(contar_online()))
     pagina = pagina.replace("{qtd_contas}", str(contar_contas()))
-    pagina = pagina.replace("{nome_marca}", obter_config("nome_marca", "CHAT CPA"))
-    pagina = pagina.replace("{apps_inicio}", obter_aplicativos_inicio())
 
     def icone_img(chave, letra, padrao=None):
         url = obter_config(chave) or padrao
@@ -5513,8 +5470,8 @@ def favicon():
 def manifest_json():
     icone = obter_config("icone_app", "/static/logo.jpg")
     manifest = {
-        "name": obter_config("nome_marca", "CHAT CPA"),
-        "short_name": obter_config("nome_marca", "CHAT CPA"),
+        "name": "CHAT CPA",
+        "short_name": "CHAT CPA",
         "start_url": "/inicio",
         "scope": "/",
         "display": "standalone",
@@ -5713,7 +5670,6 @@ def rede():
               <button class="ativa" onclick="mudarAbaAdmin('selo', this)">Selo</button>
               <button onclick="mudarAbaAdmin('tags', this)">Tags</button>
               <button onclick="mudarAbaAdmin('icones', this)">Icones</button>
-              <button onclick="mudarAbaAdmin('apps', this)">Aplicativos</button>
               <button onclick="mudarAbaAdmin('ids', this)">IDs</button>
               <button onclick="mudarAbaAdmin('zap', this)">ZAP</button>
             </div>
@@ -5773,44 +5729,6 @@ def rede():
               </div>
               <div class="resultado-admin" id="resultadoFundo"></div>
               <div class="resultado-admin" id="resultadoIcones"></div>
-            </div>
-
-            <div class="painel-admin-secao" id="secaoAdmin-apps">
-              <b>Gerenciador de aplicativos</b><br>
-              Altere o nome exibido dos apps sem alterar as rotas internas. Somente o dono pode fazer isso.
-              <div id="listaAppsAdmin" style="margin-top:12px;"></div>
-              <div class="resultado-admin" id="resultadoApps"></div>
-              <script>
-              async function carregarAppsAdmin() {
-                const box = document.getElementById('listaAppsAdmin');
-                if (!box) return;
-                box.innerHTML = 'Carregando...';
-                try {
-                  const r = await fetch('/admin/apps');
-                  const d = await r.json();
-                  if (!d.ok) { box.textContent = d.erro || 'Sem permissao.'; return; }
-                  box.innerHTML = (d.apps || []).map(a => `
-                    <div style="border:1px solid #ffffff22;border-radius:10px;padding:10px;margin-bottom:8px;">
-                      <div style="font-weight:bold;margin-bottom:6px;">${a.slug}</div>
-                      <div class="linha-admin">
-                        <input id="nomeApp_${a.slug}" type="text" value="${String(a.nome).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\"/g,'&quot;')}" placeholder="Nome do aplicativo">
-                        <button class="acao" onclick="salvarNomeApp('${a.slug}')">Salvar nome</button>
-                      </div>
-                      <div style="font-size:11px;color:#888;margin-top:4px;">Rota: ${a.rota}</div>
-                    </div>`).join('');
-                } catch(e) { box.textContent = 'Erro ao carregar aplicativos.'; }
-              }
-              async function salvarNomeApp(slug) {
-                const campo = document.getElementById('nomeApp_' + slug);
-                const nome = campo ? campo.value.trim() : '';
-                const resultado = document.getElementById('resultadoApps');
-                if (!nome) { resultado.textContent = 'Digite um nome.'; return; }
-                const r = await fetch('/admin/apps/update', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({slug:slug,nome:nome})});
-                const d = await r.json();
-                resultado.textContent = d.ok ? 'Nome salvo. Atualize a tela inicial para ver a alteração.' : (d.erro || 'Erro.');
-              }
-              carregarAppsAdmin();
-              </script>
             </div>
 
             <div class="painel-admin-secao" id="secaoAdmin-ids">
@@ -6177,38 +6095,6 @@ def rede_atribuir_tag():
     conexao.commit()
     conexao.close()
     return jsonify({"ok": True})
-
-
-@app.route("/admin/apps")
-def admin_apps():
-    if not eh_desenvolvedor(session.get("usuario")):
-        return jsonify({"ok": False, "erro": "Sem permissao."}), 403
-    conexao = obter_bd()
-    linhas = conexao.execute("SELECT slug,nome,descricao,rota,ativo,ordem FROM aplicativos ORDER BY ordem ASC, nome ASC").fetchall()
-    conexao.close()
-    return jsonify({"ok": True, "apps": [dict(l) for l in linhas]})
-
-
-@app.route("/admin/apps/update", methods=["POST"])
-def admin_apps_update():
-    if not eh_desenvolvedor(session.get("usuario")):
-        return jsonify({"ok": False, "erro": "Sem permissao."}), 403
-    dados = request.get_json(silent=True) or {}
-    slug = (dados.get("slug") or "").strip()
-    nome = (dados.get("nome") or "").strip()
-    if not slug or not nome:
-        return jsonify({"ok": False, "erro": "Slug e nome sao obrigatorios."}), 400
-    if len(nome) > 40:
-        return jsonify({"ok": False, "erro": "O nome deve ter no maximo 40 caracteres."}), 400
-    conexao = obter_bd()
-    existe = conexao.execute("SELECT 1 FROM aplicativos WHERE slug = ?", (slug,)).fetchone()
-    if not existe:
-        conexao.close()
-        return jsonify({"ok": False, "erro": "Aplicativo nao encontrado."}), 404
-    conexao.execute("UPDATE aplicativos SET nome = ?, atualizado_em = ? WHERE slug = ?", (nome, datetime.now().isoformat(), slug))
-    conexao.commit()
-    conexao.close()
-    return jsonify({"ok": True, "slug": slug, "nome": nome})
 
 
 @app.route("/admin/config", methods=["POST"])
