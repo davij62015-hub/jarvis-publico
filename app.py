@@ -417,6 +417,28 @@ def iniciar_bd():
     conexao.execute("CREATE TABLE IF NOT EXISTS zap_bloqueios (usuario TEXT NOT NULL, bloqueado TEXT NOT NULL, criado_em TEXT NOT NULL, PRIMARY KEY (usuario, bloqueado))")
     # ---------- Configuracoes gerais (icones dos apps, selo customizado, etc) ----------
     conexao.execute("CREATE TABLE IF NOT EXISTS configuracoes (chave TEXT PRIMARY KEY, valor TEXT)")
+    # ---------- Nomes e configuracoes dos aplicativos da tela inicial ----------
+    conexao.execute("""
+        CREATE TABLE IF NOT EXISTS aplicativos (
+            slug TEXT PRIMARY KEY, nome TEXT NOT NULL, descricao TEXT DEFAULT '',
+            rota TEXT NOT NULL, icone_chave TEXT, ativo INTEGER DEFAULT 1,
+            ordem INTEGER DEFAULT 0, criado_em TEXT, atualizado_em TEXT
+        )
+    """)
+    apps_padrao = [
+        ("social", "Social CPA", "Rede social", "/rede", "icone_jarvisweb", 1, 1),
+        ("chat", "CHAT CPA", "Inteligencia artificial", "/painel", "icone_jarvis", 1, 2),
+        ("zap", "ZAP", "Mensagens e chamadas", "/zap", "icone_zap", 1, 3),
+        ("codes", "CPA Codes", "Extensao de codigo", "/extensao", None, 1, 4),
+        ("suporte", "Suporte", "Ajuda e atendimento", "/suporte", "icone_suporte", 1, 5),
+        ("baixar", "Baixar app", "Instale o aplicativo", "/baixar", None, 1, 6),
+    ]
+    agora_apps = datetime.now().isoformat()
+    for slug, nome, descricao, rota, icone_chave, ativo, ordem in apps_padrao:
+        conexao.execute(
+            "INSERT OR IGNORE INTO aplicativos (slug,nome,descricao,rota,icone_chave,ativo,ordem,criado_em,atualizado_em) VALUES (?,?,?,?,?,?,?,?,?)",
+            (slug, nome, descricao, rota, icone_chave, ativo, ordem, agora_apps, agora_apps)
+        )
     # ---------- Ligacoes de voz do ZAP (sinalizacao WebRTC via polling) ----------
     conexao.execute("""
         CREATE TABLE IF NOT EXISTS zap_chamadas (
@@ -438,24 +460,6 @@ def iniciar_bd():
             remetente TEXT NOT NULL, texto TEXT NOT NULL, criado_em TEXT NOT NULL
         )
     """)
-    # ---------- CPAcord: loja de decoracoes animadas de avatar ----------
-    conexao.execute("""
-        CREATE TABLE IF NOT EXISTS decoracoes (
-            id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT NOT NULL,
-            imagem_url TEXT NOT NULL, preco TEXT NOT NULL, ativo INTEGER DEFAULT 1,
-            criado_em TEXT NOT NULL
-        )
-    """)
-    conexao.execute("""
-        CREATE TABLE IF NOT EXISTS compras_decoracoes (
-            id INTEGER PRIMARY KEY AUTOINCREMENT, usuario TEXT NOT NULL, decoracao_id INTEGER NOT NULL,
-            status TEXT NOT NULL DEFAULT 'pendente', criado_em TEXT NOT NULL, atualizado_em TEXT
-        )
-    """)
-    try:
-        conexao.execute("ALTER TABLE usuarios ADD COLUMN decoracao_ativa INTEGER")
-    except sqlite3.OperationalError:
-        pass
     existe_dev_tag = conexao.execute("SELECT 1 FROM tags WHERE nome = 'DEV'").fetchone()
     if not existe_dev_tag:
         conexao.execute("INSERT INTO tags (nome, cor, foto) VALUES ('DEV', '#ffffff', NULL)")
@@ -719,6 +723,30 @@ def definir_config(chave, valor):
     )
     conexao.commit()
     conexao.close()
+
+def obter_aplicativos_inicio():
+    conexao = obter_bd()
+    linhas = conexao.execute("SELECT * FROM aplicativos WHERE ativo = 1 ORDER BY ordem ASC, nome ASC").fetchall()
+    conexao.close()
+    html = []
+    for app_info in linhas:
+        icone = ""
+        chave = app_info["icone_chave"]
+        if chave:
+            url = obter_config(chave)
+            if url:
+                icone = f'<img src="{url}">'
+        if not icone:
+            if app_info["slug"] == "codes":
+                icone = "&lt;/&gt;"
+            elif app_info["slug"] == "baixar":
+                icone = "&#8595;"
+            else:
+                icone = app_info["nome"][:1].upper()
+        nome = app_info["nome"]
+        rota = app_info["rota"]
+        html.append(f'<a class="app-icone" href="{rota}"><div class="icone-quadrado">{icone}</div>{nome}</a>')
+    return "\n  ".join(html)
 
 
 def salvar_midia_zap(arquivo):
@@ -3296,7 +3324,7 @@ body {
 </style></head>
 <body>
 <div class="status-topo">
-  <div class="marca-topo">CHAT CPA<span>CRIPTOGRAFADO PARA AJUDAR</span></div>
+  <div class="marca-topo">{nome_marca}<span>CRIPTOGRAFADO PARA AJUDAR</span></div>
   <div class="relogio" id="relogio">--:--</div>
   <div class="data" id="dataAtual"></div>
   <div class="contadores">
@@ -3305,13 +3333,7 @@ body {
   </div>
 </div>
 <div class="apps">
-  <a class="app-icone" href="/rede"><div class="icone-quadrado">{icone_jarvisweb}</div>Social CPA</a>
-  <a class="app-icone" href="/painel"><div class="icone-quadrado">{icone_jarvis}</div>CHAT CPA</a>
-  <a class="app-icone" href="/zap"><div class="icone-quadrado">{icone_zap}</div>ZAP</a>
-  <a class="app-icone" href="/extensao"><div class="icone-quadrado">&lt;/&gt;</div>CPA Codes</a>
-  <a class="app-icone" href="/suporte"><div class="icone-quadrado">{icone_suporte}</div>Suporte</a>
-  <a class="app-icone" href="/cpacord"><div class="icone-quadrado">{icone_cpacord}</div>CPAcord</a>
-  <a class="app-icone" href="/baixar"><div class="icone-quadrado">&#8595;</div>Baixar app</a>
+  {apps_inicio}
 </div>
 <div class="rodape"><span class="sair-link" onclick="location.href='/logout'">Sair da conta</span></div>
 <script>
@@ -4213,9 +4235,6 @@ body { height:100vh; overflow-y:auto; }
 .container { max-width:600px; margin:0 auto; padding:16px; }
 .cabecalho-perfil { display:flex; align-items:center; gap:20px; margin-bottom:14px; flex-wrap:wrap; margin-top:-40px; }
 .cabecalho-perfil img.avatar-grande { width:90px; height:90px; border-radius:50%; object-fit:cover; border:3px solid #000000; background:#0d0d0d; }
-.avatar-com-decoracao { position:relative; width:90px; height:90px; flex-shrink:0; }
-.avatar-com-decoracao img.avatar-grande { position:absolute; top:8px; left:8px; width:74px; height:74px; }
-.avatar-com-decoracao img.decoracao-perfil { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; }
 .bio-perfil { font-size:14px; color:#cccccc; margin-bottom:16px; white-space:pre-wrap; }
 .id-publico { font-size:12px; color:#888; margin-top:2px; letter-spacing:0.5px; }
 .stats { display:flex; gap:20px; margin-top:8px; font-size:14px; }
@@ -4242,10 +4261,7 @@ body { height:100vh; overflow-y:auto; }
 {banner_html}
 <div class="container">
   <div class="cabecalho-perfil">
-    <div class="avatar-com-decoracao">
-      <img class="avatar-grande" src="{avatar_url}">
-      {decoracao_html}
-    </div>
+    <img class="avatar-grande" src="{avatar_url}">
     <div>
       <h2 style="margin:0;">{nome_usuario} {selo}</h2>
       <div class="id-publico">ID #{id_publico}</div>
@@ -4287,129 +4303,6 @@ async function mudarId() {
 """
 
 # ---------- SUPORTE ----------
-PAGINA_CPACORD = """
-<!DOCTYPE html>
-<html lang="pt-BR"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>CPAcord</title>
-<style>
-""" + ESTILO_COMUM + """
-body { min-height:100vh; }
-.topo-cpacord { position:sticky; top:0; background:#000000; padding:14px 16px; border-bottom:1px solid #ffffff22; display:flex; align-items:center; gap:12px; z-index:5; }
-.topo-cpacord a { color:#ffffff; text-decoration:none; font-size:20px; }
-.topo-cpacord b { font-size:15px; letter-spacing:0.5px; }
-.container-cpacord { max-width:560px; margin:0 auto; padding:16px; padding-bottom:60px; }
-.aviso-cpacord { background:#0d0d0d; border:1px solid #ffffff22; border-radius:12px; padding:14px; font-size:12px; color:#999; margin-bottom:18px; }
-.grade-decoracoes { display:grid; grid-template-columns:repeat(auto-fill, minmax(140px, 1fr)); gap:12px; }
-.cartao-decoracao { background:#0d0d0d; border:1px solid #ffffff22; border-radius:14px; padding:14px; text-align:center; }
-.previa-decoracao-wrap { position:relative; width:74px; height:74px; margin:0 auto 10px; }
-.previa-decoracao-wrap img.avatar-exemplo { width:56px; height:56px; border-radius:50%; object-fit:cover; position:absolute; top:9px; left:9px; background:#222; }
-.previa-decoracao-wrap img.decoracao-overlay { width:100%; height:100%; position:absolute; top:0; left:0; pointer-events:none; }
-.nome-decoracao { font-size:13px; font-weight:bold; margin-bottom:4px; }
-.preco-decoracao { font-size:13px; color:#3ddc6a; margin-bottom:10px; }
-.botao-decoracao { width:100%; padding:9px; border-radius:8px; border:none; font-weight:bold; font-size:12px; cursor:pointer; }
-.botao-decoracao.comprar { background:#ffffff; color:#000; }
-.botao-decoracao.pendente { background:#332b00; color:#f5c518; cursor:default; }
-.botao-decoracao.equipar { background:#1a1a1a; color:#f2f2f2; border:1px solid #ffffff33; }
-.botao-decoracao.equipada { background:#0d3d20; color:#3ddc6a; border:1px solid #3ddc6a55; }
-.vazio-cpacord { text-align:center; color:#777; padding:40px 20px; font-size:13px; }
-.painel-admin-cpacord { background:#0d0d0d; border:1px solid #ffffff33; border-radius:12px; padding:14px; margin-bottom:20px; font-size:13px; }
-.painel-admin-cpacord input, .painel-admin-cpacord select { padding:9px; border-radius:8px; border:1px solid #ffffff22; background:#000; color:#f2f2f2; margin-top:6px; width:100%; }
-.painel-admin-cpacord button.acao { margin-top:8px; padding:9px 14px; border-radius:8px; border:none; background:#ffffff; color:#000; font-weight:bold; cursor:pointer; }
-.pedido-linha { display:flex; align-items:center; gap:10px; padding:8px 0; border-bottom:1px solid #ffffff11; font-size:12px; }
-.pedido-linha img { width:30px; height:30px; border-radius:50%; object-fit:cover; }
-.pedido-linha .info-pedido { flex:1; }
-.pedido-linha button { padding:5px 10px; border-radius:6px; border:none; font-size:11px; cursor:pointer; margin-left:4px; }
-.pedido-linha button.pagar { background:#3ddc6a; color:#000; }
-.pedido-linha button.recusar { background:#ff4d4d; color:#fff; }
-</style></head>
-<body>
-<div class="topo-cpacord"><a href="/inicio">&#8592;</a><b>CPAcord</b></div>
-<div class="container-cpacord">
-  <div class="aviso-cpacord">Decoracoes animadas pro seu avatar. Ao comprar, o pedido fica pendente ate o dono confirmar o pagamento (Pix combinado direto com voce).</div>
-  {painel_admin}
-  <div class="grade-decoracoes" id="gradeDecoracoes"></div>
-</div>
-<script>
-const meuUsuario = "{usuario}";
-const avatarExemplo = "{avatar_usuario}";
-async function carregarLoja() {
-    const r = await fetch("/cpacord/loja");
-    const dados = await r.json();
-    const div = document.getElementById("gradeDecoracoes");
-    div.innerHTML = "";
-    if (dados.decoracoes.length === 0) { div.innerHTML = '<div class="vazio-cpacord">Nenhuma decoracao a venda ainda.</div>'; return; }
-    dados.decoracoes.forEach(d => {
-        const cartao = document.createElement("div");
-        cartao.className = "cartao-decoracao";
-        let botao = "";
-        if (d.status === "equipada") botao = `<button class="botao-decoracao equipada" onclick="desequipar()">Equipada &#10003;</button>`;
-        else if (d.status === "possui") botao = `<button class="botao-decoracao equipar" onclick="equipar(${d.id})">Equipar</button>`;
-        else if (d.status === "pendente") botao = `<button class="botao-decoracao pendente" disabled>Aguardando pagamento</button>`;
-        else botao = `<button class="botao-decoracao comprar" onclick="comprar(${d.id})">Comprar</button>`;
-        cartao.innerHTML = `
-          <div class="previa-decoracao-wrap"><img class="avatar-exemplo" src="${avatarExemplo}"><img class="decoracao-overlay" src="${d.imagem_url}"></div>
-          <div class="nome-decoracao">${d.nome}</div>
-          <div class="preco-decoracao">${d.preco}</div>
-          ${botao}`;
-        div.appendChild(cartao);
-    });
-}
-async function comprar(id) {
-    const r = await fetch("/cpacord/comprar", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({decoracao_id: id}) });
-    const d = await r.json();
-    if (!d.ok) { alert(d.erro || "Nao foi possivel comprar."); return; }
-    alert("Pedido feito! Fale com o dono do app (via ZAP) pra combinar o pagamento. Assim que ele confirmar, a decoracao e liberada aqui.");
-    carregarLoja();
-}
-async function equipar(id) {
-    await fetch("/cpacord/equipar", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({decoracao_id: id}) });
-    carregarLoja();
-}
-async function desequipar() {
-    await fetch("/cpacord/desequipar", { method: "POST" });
-    carregarLoja();
-}
-async function criarDecoracao() {
-    const nome = document.getElementById("novaDecNome").value.trim();
-    const preco = document.getElementById("novaDecPreco").value.trim();
-    const arquivo = document.getElementById("novaDecImagem").files[0];
-    const resultado = document.getElementById("resultadoNovaDec");
-    if (!nome || !preco || !arquivo) { resultado.textContent = "Preencha nome, preco e imagem."; return; }
-    const form = new FormData();
-    form.append("nome", nome); form.append("preco", preco); form.append("imagem", arquivo);
-    const r = await fetch("/cpacord/admin/criar_decoracao", { method: "POST", body: form });
-    const d = await r.json();
-    resultado.textContent = d.ok ? "Decoracao criada!" : (d.erro || "Erro.");
-    if (d.ok) { document.getElementById("novaDecNome").value = ""; document.getElementById("novaDecPreco").value = ""; carregarLoja(); }
-}
-async function carregarPedidosAdmin() {
-    const div = document.getElementById("listaPedidosAdmin");
-    if (!div) return;
-    const r = await fetch("/cpacord/admin/pedidos");
-    const pedidos = await r.json();
-    div.innerHTML = "";
-    if (pedidos.length === 0) { div.innerHTML = "<div style='color:#777;padding:8px 0;'>Nenhum pedido pendente.</div>"; return; }
-    pedidos.forEach(p => {
-        const linha = document.createElement("div");
-        linha.className = "pedido-linha";
-        linha.innerHTML = `<img src="${p.avatar}"><div class="info-pedido">${p.usuario} #${p.id_publico} quer <b>${p.decoracao_nome}</b> (${p.preco})</div><button class="pagar" onclick="marcarPago(${p.id})">Confirmar pago</button><button class="recusar" onclick="recusarPedido(${p.id})">Recusar</button>`;
-        div.appendChild(linha);
-    });
-}
-async function marcarPago(id) {
-    await fetch("/cpacord/admin/marcar_pago", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({compra_id: id}) });
-    carregarPedidosAdmin(); carregarLoja();
-}
-async function recusarPedido(id) {
-    await fetch("/cpacord/admin/recusar", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({compra_id: id}) });
-    carregarPedidosAdmin(); carregarLoja();
-}
-carregarLoja();
-carregarPedidosAdmin();
-</script>
-</body></html>
-"""
-
 PAGINA_SUPORTE = """
 <!DOCTYPE html>
 <html lang="pt-BR"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
@@ -4868,64 +4761,13 @@ let indiceCandidatosRecebidos = 0, pollCandidatos = null, pollStatusLigacao = nu
 let mutadoLocal = false;
 let cameraLigada = false;
 let chamadaComVideo = false;
-let telaCompartilhada = false;
-let streamTelaAtual = null;
-let trackCameraGuardada = null;
 function botoesEmChamadaHtml() {
     let html = '<button class="botao-chamada-circulo" id="botaoMudo" style="background:#333;color:#fff;" onclick="alternarMudo()">' + (mutadoLocal ? '&#128263;' : '&#127908;') + '</button>';
     if (chamadaComVideo) {
         html += '<button class="botao-chamada-circulo" id="botaoCamera" style="background:#333;color:#fff;" onclick="alternarCamera()">' + (cameraLigada ? '&#128249;' : '&#128683;') + '</button>';
     }
-    html += '<button class="botao-chamada-circulo" id="botaoTela" style="background:' + (telaCompartilhada ? '#3ddc6a' : '#333') + ';color:#fff;" onclick="alternarCompartilharTela()" title="Compartilhar tela">&#128421;</button>';
     html += '<button class="botao-chamada-circulo encerrar" onclick="encerrarChamada(true)">&#128222;</button>';
     return html;
-}
-function atualizarBotoesChamadaSeEmChamada() {
-    const div = document.getElementById("botoesChamada");
-    if (div && div.querySelector(".encerrar")) div.innerHTML = botoesEmChamadaHtml();
-}
-async function alternarCompartilharTela() {
-    if (!pc) return;
-    if (telaCompartilhada) { pararCompartilharTela(); return; }
-    try {
-        streamTelaAtual = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
-        const trackTela = streamTelaAtual.getVideoTracks()[0];
-        const remetenteVideo = pc.getSenders().find(s => s.track && s.track.kind === "video");
-        if (remetenteVideo) {
-            trackCameraGuardada = remetenteVideo.track;
-            await remetenteVideo.replaceTrack(trackTela);
-        } else {
-            pc.addTrack(trackTela, streamTelaAtual);
-        }
-        const videoLocal = document.getElementById("videoLocal");
-        videoLocal.srcObject = streamTelaAtual;
-        videoLocal.classList.add("ativo");
-        chamadaComVideo = true;
-        telaCompartilhada = true;
-        trackTela.onended = () => pararCompartilharTela();
-        atualizarBotoesChamadaSeEmChamada();
-    } catch (e) {
-        alert("Nao foi possivel compartilhar a tela. Seu navegador precisa suportar essa funcao.");
-    }
-}
-function pararCompartilharTela() {
-    if (streamTelaAtual) { streamTelaAtual.getTracks().forEach(t => t.stop()); streamTelaAtual = null; }
-    if (pc) {
-        const remetenteVideo = pc.getSenders().find(s => s.track && s.track.kind === "video");
-        if (remetenteVideo) {
-            if (trackCameraGuardada) remetenteVideo.replaceTrack(trackCameraGuardada);
-            else remetenteVideo.replaceTrack(null);
-        }
-    }
-    const videoLocal = document.getElementById("videoLocal");
-    if (streamLocal && streamLocal.getVideoTracks().length && cameraLigada) {
-        videoLocal.srcObject = streamLocal;
-    } else {
-        videoLocal.classList.remove("ativo");
-        videoLocal.srcObject = null;
-    }
-    telaCompartilhada = false;
-    atualizarBotoesChamadaSeEmChamada();
 }
 function alternarMudo() {
     if (!streamLocal) return;
@@ -5636,6 +5478,8 @@ def inicio():
     pagina = PAGINA_INICIO.replace("{fundo_url}", obter_config("fundo_inicio", FUNDO_INICIO_URL))
     pagina = pagina.replace("{qtd_online}", str(contar_online()))
     pagina = pagina.replace("{qtd_contas}", str(contar_contas()))
+    pagina = pagina.replace("{nome_marca}", obter_config("nome_marca", "CHAT CPA"))
+    pagina = pagina.replace("{apps_inicio}", obter_aplicativos_inicio())
 
     def icone_img(chave, letra, padrao=None):
         url = obter_config(chave) or padrao
@@ -5645,7 +5489,6 @@ def inicio():
     pagina = pagina.replace("{icone_jarvis}", icone_img("icone_jarvis", "C", "/static/logo.jpg"))
     pagina = pagina.replace("{icone_zap}", icone_img("icone_zap", "Z"))
     pagina = pagina.replace("{icone_suporte}", icone_img("icone_suporte", "S"))
-    pagina = pagina.replace("{icone_cpacord}", icone_img("icone_cpacord", "&#128142;"))
     pagina = pagina.replace("{icone_app_url}", obter_config("icone_app", "/static/logo.jpg"))
     return pagina
 
@@ -5670,8 +5513,8 @@ def favicon():
 def manifest_json():
     icone = obter_config("icone_app", "/static/logo.jpg")
     manifest = {
-        "name": "CHAT CPA",
-        "short_name": "CHAT CPA",
+        "name": obter_config("nome_marca", "CHAT CPA"),
+        "short_name": obter_config("nome_marca", "CHAT CPA"),
         "start_url": "/inicio",
         "scope": "/",
         "display": "standalone",
@@ -5870,6 +5713,7 @@ def rede():
               <button class="ativa" onclick="mudarAbaAdmin('selo', this)">Selo</button>
               <button onclick="mudarAbaAdmin('tags', this)">Tags</button>
               <button onclick="mudarAbaAdmin('icones', this)">Icones</button>
+              <button onclick="mudarAbaAdmin('apps', this)">Aplicativos</button>
               <button onclick="mudarAbaAdmin('ids', this)">IDs</button>
               <button onclick="mudarAbaAdmin('zap', this)">ZAP</button>
             </div>
@@ -5929,6 +5773,44 @@ def rede():
               </div>
               <div class="resultado-admin" id="resultadoFundo"></div>
               <div class="resultado-admin" id="resultadoIcones"></div>
+            </div>
+
+            <div class="painel-admin-secao" id="secaoAdmin-apps">
+              <b>Gerenciador de aplicativos</b><br>
+              Altere o nome exibido dos apps sem alterar as rotas internas. Somente o dono pode fazer isso.
+              <div id="listaAppsAdmin" style="margin-top:12px;"></div>
+              <div class="resultado-admin" id="resultadoApps"></div>
+              <script>
+              async function carregarAppsAdmin() {
+                const box = document.getElementById('listaAppsAdmin');
+                if (!box) return;
+                box.innerHTML = 'Carregando...';
+                try {
+                  const r = await fetch('/admin/apps');
+                  const d = await r.json();
+                  if (!d.ok) { box.textContent = d.erro || 'Sem permissao.'; return; }
+                  box.innerHTML = (d.apps || []).map(a => `
+                    <div style="border:1px solid #ffffff22;border-radius:10px;padding:10px;margin-bottom:8px;">
+                      <div style="font-weight:bold;margin-bottom:6px;">${a.slug}</div>
+                      <div class="linha-admin">
+                        <input id="nomeApp_${a.slug}" type="text" value="${String(a.nome).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\"/g,'&quot;')}" placeholder="Nome do aplicativo">
+                        <button class="acao" onclick="salvarNomeApp('${a.slug}')">Salvar nome</button>
+                      </div>
+                      <div style="font-size:11px;color:#888;margin-top:4px;">Rota: ${a.rota}</div>
+                    </div>`).join('');
+                } catch(e) { box.textContent = 'Erro ao carregar aplicativos.'; }
+              }
+              async function salvarNomeApp(slug) {
+                const campo = document.getElementById('nomeApp_' + slug);
+                const nome = campo ? campo.value.trim() : '';
+                const resultado = document.getElementById('resultadoApps');
+                if (!nome) { resultado.textContent = 'Digite um nome.'; return; }
+                const r = await fetch('/admin/apps/update', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({slug:slug,nome:nome})});
+                const d = await r.json();
+                resultado.textContent = d.ok ? 'Nome salvo. Atualize a tela inicial para ver a alteração.' : (d.erro || 'Erro.');
+              }
+              carregarAppsAdmin();
+              </script>
             </div>
 
             <div class="painel-admin-secao" id="secaoAdmin-ids">
@@ -6024,9 +5906,6 @@ def perfil(nome_usuario):
         botao_seguir = f'<button class="botao-seguir {classe_ativo}" onclick="seguirPerfil(\'{nome_real}\')">{texto_botao}</button>'
         editor_perfil = ""
     pagina = PAGINA_PERFIL.replace("{nome_usuario}", nome_real).replace("{avatar_url}", avatar).replace("{selo}", selo)
-    decoracao_url = obter_decoracao_ativa_url(nome_real)
-    decoracao_html = f'<img class="decoracao-perfil" src="{decoracao_url}">' if decoracao_url else ""
-    pagina = pagina.replace("{decoracao_html}", decoracao_html)
     pagina = pagina.replace("{id_publico}", str(linha_alvo["id_publico"] or "-"))
     pagina = pagina.replace("{banner_html}", banner_html).replace("{bio_html}", bio_html)
     pagina = pagina.replace("{qtd_posts}", str(len(posts))).replace("{qtd_seguidores}", str(qtd_seguidores)).replace("{qtd_seguindo}", str(qtd_seguindo))
@@ -6300,6 +6179,38 @@ def rede_atribuir_tag():
     return jsonify({"ok": True})
 
 
+@app.route("/admin/apps")
+def admin_apps():
+    if not eh_desenvolvedor(session.get("usuario")):
+        return jsonify({"ok": False, "erro": "Sem permissao."}), 403
+    conexao = obter_bd()
+    linhas = conexao.execute("SELECT slug,nome,descricao,rota,ativo,ordem FROM aplicativos ORDER BY ordem ASC, nome ASC").fetchall()
+    conexao.close()
+    return jsonify({"ok": True, "apps": [dict(l) for l in linhas]})
+
+
+@app.route("/admin/apps/update", methods=["POST"])
+def admin_apps_update():
+    if not eh_desenvolvedor(session.get("usuario")):
+        return jsonify({"ok": False, "erro": "Sem permissao."}), 403
+    dados = request.get_json(silent=True) or {}
+    slug = (dados.get("slug") or "").strip()
+    nome = (dados.get("nome") or "").strip()
+    if not slug or not nome:
+        return jsonify({"ok": False, "erro": "Slug e nome sao obrigatorios."}), 400
+    if len(nome) > 40:
+        return jsonify({"ok": False, "erro": "O nome deve ter no maximo 40 caracteres."}), 400
+    conexao = obter_bd()
+    existe = conexao.execute("SELECT 1 FROM aplicativos WHERE slug = ?", (slug,)).fetchone()
+    if not existe:
+        conexao.close()
+        return jsonify({"ok": False, "erro": "Aplicativo nao encontrado."}), 404
+    conexao.execute("UPDATE aplicativos SET nome = ?, atualizado_em = ? WHERE slug = ?", (nome, datetime.now().isoformat(), slug))
+    conexao.commit()
+    conexao.close()
+    return jsonify({"ok": True, "slug": slug, "nome": nome})
+
+
 @app.route("/admin/config", methods=["POST"])
 def admin_config():
     """Painel do dono: define os icones de cada app e a imagem do selo verificado."""
@@ -6360,224 +6271,6 @@ def admin_zap_historico(conversa):
             conteudo = decifrado if decifrado is not None else "[nao foi possivel decifrar]"
         mensagens.append({"id": l["id"], "remetente": l["remetente"], "tipo": l["tipo"], "conteudo": conteudo, "criado_em": l["criado_em"]})
     return jsonify({"mensagens": mensagens})
-
-
-def obter_decoracao_ativa_url(usuario):
-    """Retorna a URL da decoracao animada equipada pela conta, se houver."""
-    conexao = obter_bd()
-    linha = conexao.execute(
-        "SELECT d.imagem_url FROM usuarios u JOIN decoracoes d ON d.id = u.decoracao_ativa "
-        "WHERE u.usuario = ? COLLATE NOCASE AND d.ativo = 1",
-        (usuario,),
-    ).fetchone()
-    conexao.close()
-    return linha["imagem_url"] if linha else None
-
-
-@app.route("/cpacord")
-def cpacord():
-    if not session.get("usuario"):
-        return redirect(url_for("login"))
-    usuario = session["usuario"]
-    linha = buscar_usuario(usuario)
-    avatar_usuario = linha["foto_perfil"] if linha and linha["foto_perfil"] else AVATAR_PADRAO + usuario
-    painel_admin_html = ""
-    if eh_desenvolvedor(usuario):
-        painel_admin_html = """
-        <div class="painel-admin-cpacord">
-          <b>Painel do dono</b>
-          <label style="display:block;margin-top:10px;font-size:12px;color:#999;">Nova decoracao</label>
-          <input id="novaDecNome" type="text" placeholder="Nome da decoracao">
-          <input id="novaDecPreco" type="text" placeholder="Preco (ex: R$ 5,00)">
-          <input id="novaDecImagem" type="file" accept="image/*">
-          <button class="acao" onclick="criarDecoracao()">Criar decoracao</button>
-          <div class="resultado-admin" id="resultadoNovaDec" style="margin-top:6px;color:#fff;font-size:12px;"></div>
-          <label style="display:block;margin-top:14px;font-size:12px;color:#999;">Pedidos pendentes</label>
-          <div id="listaPedidosAdmin" style="margin-top:8px;"></div>
-        </div>
-        """
-    pagina = PAGINA_CPACORD.replace("{usuario}", usuario).replace("{avatar_usuario}", avatar_usuario)
-    pagina = pagina.replace("{painel_admin}", painel_admin_html)
-    return pagina
-
-
-@app.route("/cpacord/loja")
-def cpacord_loja():
-    if not session.get("usuario"):
-        return jsonify({"decoracoes": []}), 401
-    usuario = session["usuario"]
-    conexao = obter_bd()
-    decoracoes = conexao.execute("SELECT * FROM decoracoes WHERE ativo = 1 ORDER BY id DESC").fetchall()
-    equipada_id = None
-    linha_usuario = conexao.execute("SELECT decoracao_ativa FROM usuarios WHERE usuario = ? COLLATE NOCASE", (usuario,)).fetchone()
-    if linha_usuario:
-        equipada_id = linha_usuario["decoracao_ativa"]
-    resultado = []
-    for d in decoracoes:
-        status = "disponivel"
-        if d["id"] == equipada_id:
-            status = "equipada"
-        else:
-            compra = conexao.execute(
-                "SELECT status FROM compras_decoracoes WHERE usuario = ? COLLATE NOCASE AND decoracao_id = ? ORDER BY id DESC LIMIT 1",
-                (usuario, d["id"]),
-            ).fetchone()
-            if compra:
-                if compra["status"] in ("pago", "entregue"):
-                    status = "possui"
-                elif compra["status"] == "pendente":
-                    status = "pendente"
-        resultado.append({"id": d["id"], "nome": d["nome"], "imagem_url": d["imagem_url"], "preco": d["preco"], "status": status})
-    conexao.close()
-    return jsonify({"decoracoes": resultado})
-
-
-@app.route("/cpacord/comprar", methods=["POST"])
-def cpacord_comprar():
-    if not session.get("usuario"):
-        return jsonify({"ok": False}), 401
-    usuario = session["usuario"]
-    dados = request.get_json() or {}
-    try:
-        decoracao_id = int(dados.get("decoracao_id"))
-    except (TypeError, ValueError):
-        return jsonify({"ok": False, "erro": "Decoracao invalida."})
-    conexao = obter_bd()
-    decoracao = conexao.execute("SELECT * FROM decoracoes WHERE id = ? AND ativo = 1", (decoracao_id,)).fetchone()
-    if not decoracao:
-        conexao.close()
-        return jsonify({"ok": False, "erro": "Decoracao nao encontrada."})
-    pedido_existente = conexao.execute(
-        "SELECT status FROM compras_decoracoes WHERE usuario = ? COLLATE NOCASE AND decoracao_id = ? ORDER BY id DESC LIMIT 1",
-        (usuario, decoracao_id),
-    ).fetchone()
-    if pedido_existente and pedido_existente["status"] in ("pendente", "pago", "entregue"):
-        conexao.close()
-        return jsonify({"ok": False, "erro": "Voce ja tem um pedido ou ja possui essa decoracao."})
-    conexao.execute(
-        "INSERT INTO compras_decoracoes (usuario, decoracao_id, status, criado_em) VALUES (?, ?, 'pendente', ?)",
-        (usuario, decoracao_id, datetime.now().isoformat()),
-    )
-    conexao.commit()
-    conexao.close()
-    return jsonify({"ok": True})
-
-
-@app.route("/cpacord/equipar", methods=["POST"])
-def cpacord_equipar():
-    if not session.get("usuario"):
-        return jsonify({"ok": False}), 401
-    usuario = session["usuario"]
-    dados = request.get_json() or {}
-    try:
-        decoracao_id = int(dados.get("decoracao_id"))
-    except (TypeError, ValueError):
-        return jsonify({"ok": False}), 400
-    conexao = obter_bd()
-    possui = conexao.execute(
-        "SELECT 1 FROM compras_decoracoes WHERE usuario = ? COLLATE NOCASE AND decoracao_id = ? AND status IN ('pago','entregue')",
-        (usuario, decoracao_id),
-    ).fetchone()
-    if not possui:
-        conexao.close()
-        return jsonify({"ok": False, "erro": "Voce nao possui essa decoracao."})
-    conexao.execute("UPDATE usuarios SET decoracao_ativa = ? WHERE usuario = ? COLLATE NOCASE", (decoracao_id, usuario))
-    conexao.commit()
-    conexao.close()
-    return jsonify({"ok": True})
-
-
-@app.route("/cpacord/desequipar", methods=["POST"])
-def cpacord_desequipar():
-    if not session.get("usuario"):
-        return jsonify({"ok": False}), 401
-    conexao = obter_bd()
-    conexao.execute("UPDATE usuarios SET decoracao_ativa = NULL WHERE usuario = ? COLLATE NOCASE", (session["usuario"],))
-    conexao.commit()
-    conexao.close()
-    return jsonify({"ok": True})
-
-
-@app.route("/cpacord/admin/criar_decoracao", methods=["POST"])
-def cpacord_admin_criar_decoracao():
-    if not eh_desenvolvedor(session.get("usuario")):
-        return jsonify({"ok": False, "erro": "Sem permissao."}), 403
-    nome = request.form.get("nome", "").strip()
-    preco = request.form.get("preco", "").strip()
-    arquivo = request.files.get("imagem")
-    if not nome or not preco or not arquivo:
-        return jsonify({"ok": False, "erro": "Preencha nome, preco e imagem."})
-    url = salvar_imagem(arquivo)
-    if not url:
-        return jsonify({"ok": False, "erro": "Nao foi possivel enviar a imagem."})
-    conexao = obter_bd()
-    conexao.execute(
-        "INSERT INTO decoracoes (nome, imagem_url, preco, ativo, criado_em) VALUES (?, ?, ?, 1, ?)",
-        (nome, url, preco, datetime.now().isoformat()),
-    )
-    conexao.commit()
-    conexao.close()
-    return jsonify({"ok": True})
-
-
-@app.route("/cpacord/admin/pedidos")
-def cpacord_admin_pedidos():
-    if not eh_desenvolvedor(session.get("usuario")):
-        return jsonify([]), 403
-    conexao = obter_bd()
-    pedidos = conexao.execute(
-        "SELECT c.id, c.usuario, d.nome AS decoracao_nome, d.preco FROM compras_decoracoes c "
-        "JOIN decoracoes d ON d.id = c.decoracao_id WHERE c.status = 'pendente' ORDER BY c.id ASC"
-    ).fetchall()
-    resultado = []
-    for p in pedidos:
-        u = buscar_usuario(p["usuario"])
-        resultado.append({
-            "id": p["id"], "usuario": p["usuario"],
-            "id_publico": u["id_publico"] if u else "-",
-            "avatar": (u["foto_perfil"] if u and u["foto_perfil"] else AVATAR_PADRAO + p["usuario"]),
-            "decoracao_nome": p["decoracao_nome"], "preco": p["preco"],
-        })
-    conexao.close()
-    return jsonify(resultado)
-
-
-@app.route("/cpacord/admin/marcar_pago", methods=["POST"])
-def cpacord_admin_marcar_pago():
-    if not eh_desenvolvedor(session.get("usuario")):
-        return jsonify({"ok": False, "erro": "Sem permissao."}), 403
-    dados = request.get_json() or {}
-    try:
-        compra_id = int(dados.get("compra_id"))
-    except (TypeError, ValueError):
-        return jsonify({"ok": False}), 400
-    conexao = obter_bd()
-    conexao.execute(
-        "UPDATE compras_decoracoes SET status = 'pago', atualizado_em = ? WHERE id = ?",
-        (datetime.now().isoformat(), compra_id),
-    )
-    conexao.commit()
-    conexao.close()
-    return jsonify({"ok": True})
-
-
-@app.route("/cpacord/admin/recusar", methods=["POST"])
-def cpacord_admin_recusar():
-    if not eh_desenvolvedor(session.get("usuario")):
-        return jsonify({"ok": False, "erro": "Sem permissao."}), 403
-    dados = request.get_json() or {}
-    try:
-        compra_id = int(dados.get("compra_id"))
-    except (TypeError, ValueError):
-        return jsonify({"ok": False}), 400
-    conexao = obter_bd()
-    conexao.execute(
-        "UPDATE compras_decoracoes SET status = 'recusado', atualizado_em = ? WHERE id = ?",
-        (datetime.now().isoformat(), compra_id),
-    )
-    conexao.commit()
-    conexao.close()
-    return jsonify({"ok": True})
 
 
 @app.route("/suporte")
