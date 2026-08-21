@@ -275,7 +275,7 @@ EMAIL_DONO = "samuelgomeswx2000@gmail.com"
 # depois de um tempo (veja os parametros ?ex=...&is=...&hm=... na URL). Quando
 # esse link parar de funcionar, e so trocar o valor abaixo por outro link de
 # imagem publica (ou subir a imagem para /static e usar "/static/fundo.jpg").
-FUNDO_INICIO_URL = "https://cdn.discordapp.com/attachments/1527396622336524359/1540137847665860628/4k_OLED_Screensaver____Neon_Blue_Color_Tunnel_TV_Abstract_background_Video_meditation.jpg?ex=6a88dca5&is=6a878b25&hm=350502d3b4aaaf3e63945dc72de0fa218eb6f46952c12dc8018c475b654f725e"
+FUNDO_INICIO_URL = "https://cdn.discordapp.com/attachments/1527396622336524359/1538287118911021250/1f38792ffa63762e59c32946e314626e.jpg?ex=6a822105&is=6a80cf85&hm=ac3dc688febe05554a4409abeffc4e5c54b9cbf3427d3ac5ce77f8298bf80cb5&"
 
 # ---------- ImgBB (hospedagem de imagens de perfil/posts) ----------
 IMGBB_API_KEY = os.environ.get("IMGBB_API_KEY", "")
@@ -417,28 +417,6 @@ def iniciar_bd():
     conexao.execute("CREATE TABLE IF NOT EXISTS zap_bloqueios (usuario TEXT NOT NULL, bloqueado TEXT NOT NULL, criado_em TEXT NOT NULL, PRIMARY KEY (usuario, bloqueado))")
     # ---------- Configuracoes gerais (icones dos apps, selo customizado, etc) ----------
     conexao.execute("CREATE TABLE IF NOT EXISTS configuracoes (chave TEXT PRIMARY KEY, valor TEXT)")
-    # ---------- Nomes e configuracoes dos aplicativos da tela inicial ----------
-    conexao.execute("""
-        CREATE TABLE IF NOT EXISTS aplicativos (
-            slug TEXT PRIMARY KEY, nome TEXT NOT NULL, descricao TEXT DEFAULT '',
-            rota TEXT NOT NULL, icone_chave TEXT, ativo INTEGER DEFAULT 1,
-            ordem INTEGER DEFAULT 0, criado_em TEXT, atualizado_em TEXT
-        )
-    """)
-    apps_padrao = [
-        ("social", "Social CPA", "Rede social", "/rede", "icone_jarvisweb", 1, 1),
-        ("chat", "CHAT CPA", "Inteligencia artificial", "/painel", "icone_jarvis", 1, 2),
-        ("zap", "ZAP", "Mensagens e chamadas", "/zap", "icone_zap", 1, 3),
-        ("codes", "CPA Codes", "Extensao de codigo", "/extensao", None, 1, 4),
-        ("suporte", "Suporte", "Ajuda e atendimento", "/suporte", "icone_suporte", 1, 5),
-        ("baixar", "Baixar app", "Instale o aplicativo", "/baixar", None, 1, 6),
-    ]
-    agora_apps = datetime.now().isoformat()
-    for slug, nome, descricao, rota, icone_chave, ativo, ordem in apps_padrao:
-        conexao.execute(
-            "INSERT OR IGNORE INTO aplicativos (slug,nome,descricao,rota,icone_chave,ativo,ordem,criado_em,atualizado_em) VALUES (?,?,?,?,?,?,?,?,?)",
-            (slug, nome, descricao, rota, icone_chave, ativo, ordem, agora_apps, agora_apps)
-        )
     # ---------- Ligacoes de voz do ZAP (sinalizacao WebRTC via polling) ----------
     conexao.execute("""
         CREATE TABLE IF NOT EXISTS zap_chamadas (
@@ -460,6 +438,35 @@ def iniciar_bd():
             remetente TEXT NOT NULL, texto TEXT NOT NULL, criado_em TEXT NOT NULL
         )
     """)
+    # ---------- CPAcord: loja de decoracoes animadas de avatar ----------
+    conexao.execute("""
+        CREATE TABLE IF NOT EXISTS decoracoes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT NOT NULL,
+            imagem_url TEXT, preco TEXT NOT NULL, ativo INTEGER DEFAULT 1,
+            tipo TEXT NOT NULL DEFAULT 'imagem', cor TEXT,
+            criado_em TEXT NOT NULL
+        )
+    """)
+    conexao.execute("""
+        CREATE TABLE IF NOT EXISTS compras_decoracoes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, usuario TEXT NOT NULL, decoracao_id INTEGER NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pendente', comprovante_url TEXT,
+            criado_em TEXT NOT NULL, atualizado_em TEXT
+        )
+    """)
+    for coluna, tipo in [("tipo", "TEXT NOT NULL DEFAULT 'imagem'"), ("cor", "TEXT")]:
+        try:
+            conexao.execute(f"ALTER TABLE decoracoes ADD COLUMN {coluna} {tipo}")
+        except sqlite3.OperationalError:
+            pass
+    try:
+        conexao.execute("ALTER TABLE compras_decoracoes ADD COLUMN comprovante_url TEXT")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        conexao.execute("ALTER TABLE usuarios ADD COLUMN decoracao_ativa INTEGER")
+    except sqlite3.OperationalError:
+        pass
     existe_dev_tag = conexao.execute("SELECT 1 FROM tags WHERE nome = 'DEV'").fetchone()
     if not existe_dev_tag:
         conexao.execute("INSERT INTO tags (nome, cor, foto) VALUES ('DEV', '#ffffff', NULL)")
@@ -724,30 +731,6 @@ def definir_config(chave, valor):
     conexao.commit()
     conexao.close()
 
-def obter_aplicativos_inicio():
-    conexao = obter_bd()
-    linhas = conexao.execute("SELECT * FROM aplicativos WHERE ativo = 1 ORDER BY ordem ASC, nome ASC").fetchall()
-    conexao.close()
-    html = []
-    for app_info in linhas:
-        icone = ""
-        chave = app_info["icone_chave"]
-        if chave:
-            url = obter_config(chave)
-            if url:
-                icone = f'<img src="{url}">'
-        if not icone:
-            if app_info["slug"] == "codes":
-                icone = "&lt;/&gt;"
-            elif app_info["slug"] == "baixar":
-                icone = "&#8595;"
-            else:
-                icone = app_info["nome"][:1].upper()
-        nome = app_info["nome"]
-        rota = app_info["rota"]
-        html.append(f'<a class="app-icone" href="{rota}"><div class="icone-quadrado">{icone}</div>{nome}</a>')
-    return "\n  ".join(html)
-
 
 def salvar_midia_zap(arquivo):
     """Envia imagens para o ImgBB; audios e videos ficam salvos localmente (o ImgBB so aceita imagem)."""
@@ -845,6 +828,10 @@ html, body { height:100%; max-width:100%; overflow-x:hidden; }
 body { margin:0; font-family: 'Segoe UI', Arial, sans-serif; background:#000000; color:#f2f2f2; }
 img, video, svg { max-width:100%; }
 .botao-copiar-flutuante { position:fixed; z-index:999; background:#2a2a2a; color:#fff; padding:8px 16px; border-radius:20px; font-size:13px; font-weight:bold; box-shadow:0 4px 14px #00000088; border:1px solid #ffffff22; }
+.avatar-deco-wrap { position:relative; display:inline-flex; flex-shrink:0; }
+.avatar-deco-wrap img.avatar-base { display:block; border-radius:50%; object-fit:cover; }
+.avatar-deco-wrap .deco-overlay-img { position:absolute; inset:-18%; width:136%; height:136%; pointer-events:none; }
+.avatar-deco-wrap .deco-overlay-cor { position:absolute; inset:-3px; border-radius:50%; pointer-events:none; border:2px solid var(--cor-decoracao,#3ddc6a); box-shadow:0 0 6px 1px var(--cor-decoracao,#3ddc6a); }
 input, textarea { -webkit-user-select:text; -moz-user-select:text; user-select:text; }
 button, .acao-lateral, .nav-inferior, .botao-seguir-lateral, .tag-badge, .item-icone, .painel-admin-abas button,
 .linha-membro-grupo button, .item-grupo, .voltar, .titulo-topo, .botao-engrenagem, .botao-info-grupo {
@@ -3324,7 +3311,7 @@ body {
 </style></head>
 <body>
 <div class="status-topo">
-  <div class="marca-topo">{nome_marca}<span>CRIPTOGRAFADO PARA AJUDAR</span></div>
+  <div class="marca-topo">CHAT CPA<span>CRIPTOGRAFADO PARA AJUDAR</span></div>
   <div class="relogio" id="relogio">--:--</div>
   <div class="data" id="dataAtual"></div>
   <div class="contadores">
@@ -3333,7 +3320,13 @@ body {
   </div>
 </div>
 <div class="apps">
-  {apps_inicio}
+  <a class="app-icone" href="/rede"><div class="icone-quadrado">{icone_jarvisweb}</div>Social CPA</a>
+  <a class="app-icone" href="/painel"><div class="icone-quadrado">{icone_jarvis}</div>CHAT CPA</a>
+  <a class="app-icone" href="/zap"><div class="icone-quadrado">{icone_zap}</div>ZAP</a>
+  <a class="app-icone" href="/extensao"><div class="icone-quadrado">&lt;/&gt;</div>CPA Codes</a>
+  <a class="app-icone" href="/suporte"><div class="icone-quadrado">{icone_suporte}</div>Suporte</a>
+  <a class="app-icone" href="/cpacord"><div class="icone-quadrado">{icone_cpacord}</div>CPAcord</a>
+  <a class="app-icone" href="/baixar"><div class="icone-quadrado">&#8595;</div>Baixar app</a>
 </div>
 <div class="rodape"><span class="sair-link" onclick="location.href='/logout'">Sair da conta</span></div>
 <script>
@@ -3879,9 +3872,11 @@ html, body { height:100%; overflow:hidden; background:#000; }
 .post img.post-imagem, .post video { max-width:100%; max-height:100%; width:auto; height:auto; object-fit:contain; }
 .post-sem-midia { padding:24px; font-size:20px; text-align:center; color:#f2f2f2; white-space:pre-wrap; }
 .post-rodape { position:absolute; left:0; right:78px; bottom:0; padding:16px 14px calc(70px + env(safe-area-inset-bottom)); background:linear-gradient(transparent, #000000cc 70%); }
-.post-cabecalho { display:flex; align-items:center; gap:8px; margin-bottom:6px; font-weight:bold; }
-.post-cabecalho a { color:#f2f2f2; text-decoration:none; display:flex; align-items:center; gap:8px; }
+.post-cabecalho { display:flex; align-items:center; gap:8px; margin-bottom:6px; font-weight:bold; }.post-cabecalho a { color:#f2f2f2; text-decoration:none; display:flex; align-items:center; gap:8px; }
 .post-cabecalho img { width:34px; height:34px; border-radius:50%; object-fit:cover; border:1px solid #ffffff44; }
+.post-cabecalho .avatar-mini-decorado { width:34px; height:34px; }
+.post-cabecalho .avatar-mini-decorado img { position:absolute; top:2px; left:2px; width:30px; height:30px; border:none; }
+.post-cabecalho .avatar-mini-decorado img.decoracao-mini { top:0; left:0; width:34px; height:34px; }
 .post-texto { margin:4px 0 0; white-space:pre-wrap; font-size:13px; color:#eee; }
 .acoes-laterais { position:absolute; right:10px; bottom:158px; display:flex; flex-direction:column; align-items:center; gap:20px; z-index:8; }
 .acao-lateral { display:flex; flex-direction:column; align-items:center; gap:3px; cursor:pointer; color:#fff; font-size:11px; text-shadow:0 1px 3px #000; }
@@ -4003,7 +3998,15 @@ async function carregarFeed() {
         html += '<div class="acao-lateral" onclick="mostrarComentarios(' + p.id + ')">' + ICONE_COMENTAR + '<span>' + p.comentarios.length + '</span></div>';
         html += '<div class="acao-lateral ' + (p.salvo ? 'salvo' : '') + '" onclick="salvarPost(' + p.id + ')">' + ICONE_SALVAR + '<span>' + (p.salvo ? 'Salvo' : 'Salvar') + '</span></div>';
         html += '</div>';
-        html += '<div class="post-rodape"><div class="post-cabecalho"><a href="/perfil/' + p.usuario + '"><img src="' + p.avatar + '">' + p.usuario + selo + (p.tag_html || '');
+        html += '<div class="post-rodape"><div class="post-cabecalho"><a href="/perfil/' + p.usuario + '">';
+        if (p.decoracao_tipo === "cor" && p.decoracao_cor) {
+            html += '<div class="avatar-mini-decorado"><img src="' + p.avatar + '"><span class="decoracao-mini-cor" style="--cor-decoracao:' + p.decoracao_cor + '"></span></div>';
+        } else if (p.decoracao_tipo === "imagem" && p.decoracao_imagem) {
+            html += '<div class="avatar-mini-decorado"><img src="' + p.avatar + '"><img class="decoracao-mini" src="' + p.decoracao_imagem + '"></div>';
+        } else {
+            html += '<img src="' + p.avatar + '">';
+        }
+        html += p.usuario + selo + (p.tag_html || '');
         if (p.usuario !== usuarioLogado) html += '<button class="botao-seguir-lateral" onclick="event.preventDefault();seguir(\\'' + p.usuario + '\\')">' + (p.seguindo ? 'Seguindo' : 'Seguir') + '</button>';
         html += '</a></div>';
         if (p.texto) html += '<div class="post-texto"></div>';
@@ -4235,6 +4238,10 @@ body { height:100vh; overflow-y:auto; }
 .container { max-width:600px; margin:0 auto; padding:16px; }
 .cabecalho-perfil { display:flex; align-items:center; gap:20px; margin-bottom:14px; flex-wrap:wrap; margin-top:-40px; }
 .cabecalho-perfil img.avatar-grande { width:90px; height:90px; border-radius:50%; object-fit:cover; border:3px solid #000000; background:#0d0d0d; }
+.avatar-com-decoracao { position:relative; width:90px; height:90px; flex-shrink:0; }
+.avatar-com-decoracao img.avatar-grande { position:absolute; top:8px; left:8px; width:74px; height:74px; }
+.avatar-com-decoracao img.decoracao-perfil { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; }
+.decoracao-perfil-cor { position:absolute; inset:0; border-radius:50%; pointer-events:none; border:4px solid var(--cor-decoracao,#3ddc6a); box-shadow:0 0 10px 1px var(--cor-decoracao,#3ddc6a); }
 .bio-perfil { font-size:14px; color:#cccccc; margin-bottom:16px; white-space:pre-wrap; }
 .id-publico { font-size:12px; color:#888; margin-top:2px; letter-spacing:0.5px; }
 .stats { display:flex; gap:20px; margin-top:8px; font-size:14px; }
@@ -4261,7 +4268,10 @@ body { height:100vh; overflow-y:auto; }
 {banner_html}
 <div class="container">
   <div class="cabecalho-perfil">
-    <img class="avatar-grande" src="{avatar_url}">
+    <div class="avatar-com-decoracao">
+      <img class="avatar-grande" src="{avatar_url}">
+      {decoracao_html}
+    </div>
     <div>
       <h2 style="margin:0;">{nome_usuario} {selo}</h2>
       <div class="id-publico">ID #{id_publico}</div>
@@ -4303,6 +4313,177 @@ async function mudarId() {
 """
 
 # ---------- SUPORTE ----------
+PAGINA_CPACORD = """
+<!DOCTYPE html>
+<html lang="pt-BR"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>CPAcord</title>
+<style>
+""" + ESTILO_COMUM + """
+body { min-height:100vh; }
+.topo-cpacord { position:sticky; top:0; background:#000000; padding:14px 16px; border-bottom:1px solid #ffffff22; display:flex; align-items:center; gap:12px; z-index:5; }
+.topo-cpacord a { color:#ffffff; text-decoration:none; font-size:20px; }
+.topo-cpacord b { font-size:15px; letter-spacing:0.5px; }
+.container-cpacord { max-width:560px; margin:0 auto; padding:16px; padding-bottom:60px; }
+.aviso-cpacord { background:#0d0d0d; border:1px solid #ffffff22; border-radius:12px; padding:14px; font-size:12px; color:#999; margin-bottom:18px; }
+.grade-decoracoes { display:grid; grid-template-columns:repeat(auto-fill, minmax(140px, 1fr)); gap:12px; }
+.cartao-decoracao { background:#0d0d0d; border:1px solid #ffffff22; border-radius:14px; padding:14px; text-align:center; }
+.previa-decoracao-wrap { position:relative; width:74px; height:74px; margin:0 auto 10px; }
+.previa-decoracao-wrap img.avatar-exemplo { width:56px; height:56px; border-radius:50%; object-fit:cover; position:absolute; top:9px; left:9px; background:#222; }
+.previa-decoracao-wrap img.decoracao-overlay { width:100%; height:100%; position:absolute; top:0; left:0; pointer-events:none; }
+.previa-decoracao-wrap .decoracao-overlay-cor { position:absolute; inset:0; border-radius:50%; pointer-events:none; border:4px solid var(--cor-decoracao,#3ddc6a); box-shadow:0 0 10px 1px var(--cor-decoracao,#3ddc6a); }
+.nome-decoracao { font-size:13px; font-weight:bold; margin-bottom:4px; }
+.preco-decoracao { font-size:13px; color:#3ddc6a; margin-bottom:10px; }
+.botao-decoracao { width:100%; padding:9px; border-radius:8px; border:none; font-weight:bold; font-size:12px; cursor:pointer; }
+.botao-decoracao.comprar { background:#ffffff; color:#000; }
+.botao-decoracao.pendente { background:#332b00; color:#f5c518; cursor:default; }
+.botao-decoracao.equipar { background:#1a1a1a; color:#f2f2f2; border:1px solid #ffffff33; }
+.botao-decoracao.equipada { background:#0d3d20; color:#3ddc6a; border:1px solid #3ddc6a55; }
+.link-comprovante { display:block; margin-top:6px; font-size:11px; color:#6fb6ff; text-decoration:underline; cursor:pointer; }
+.vazio-cpacord { text-align:center; color:#777; padding:40px 20px; font-size:13px; }
+.painel-admin-cpacord { background:#0d0d0d; border:1px solid #ffffff33; border-radius:12px; padding:14px; margin-bottom:20px; font-size:13px; }
+.painel-admin-cpacord input, .painel-admin-cpacord select { padding:9px; border-radius:8px; border:1px solid #ffffff22; background:#000; color:#f2f2f2; margin-top:6px; width:100%; }
+.painel-admin-cpacord button.acao { margin-top:8px; padding:9px 14px; border-radius:8px; border:none; background:#ffffff; color:#000; font-weight:bold; cursor:pointer; }
+.painel-admin-cpacord label.opcao-tipo { display:inline-flex; align-items:center; gap:6px; font-size:12px; color:#ccc; margin-top:8px; margin-right:14px; }
+.painel-admin-cpacord label.opcao-tipo input { width:auto; margin:0; }
+.pedido-linha { display:flex; align-items:center; gap:10px; padding:8px 0; border-bottom:1px solid #ffffff11; font-size:12px; }
+.pedido-linha img.avatar-pedido { width:30px; height:30px; border-radius:50%; object-fit:cover; }
+.pedido-linha .info-pedido { flex:1; }
+.pedido-linha button { padding:5px 10px; border-radius:6px; border:none; font-size:11px; cursor:pointer; margin-left:4px; }
+.pedido-linha button.pagar { background:#3ddc6a; color:#000; }
+.pedido-linha button.recusar { background:#ff4d4d; color:#fff; }
+.modal-comprovante { display:none; position:fixed; inset:0; background:#000000ee; z-index:100; align-items:center; justify-content:center; padding:16px; }
+.modal-comprovante.aberto { display:flex; }
+.modal-comprovante img { max-width:92vw; max-height:88vh; border-radius:10px; }
+.modal-comprovante .fechar-comprovante { position:absolute; top:20px; right:20px; color:#fff; font-size:28px; cursor:pointer; }
+</style></head>
+<body>
+<div class="topo-cpacord"><a href="/inicio">&#8592;</a><b>CPAcord</b></div>
+<div class="container-cpacord">
+  <div class="aviso-cpacord">Decoracoes animadas pro seu avatar. Ao comprar, o pedido fica pendente ate o dono confirmar o pagamento (Pix combinado direto com voce, pelo ZAP). Se quiser, anexe o comprovante junto do pedido.</div>
+  {painel_admin}
+  <div class="grade-decoracoes" id="gradeDecoracoes"></div>
+</div>
+<div class="modal-comprovante" id="modalComprovante" onclick="fecharComprovante()">
+  <span class="fechar-comprovante">&times;</span>
+  <img id="imgComprovante" src="">
+</div>
+<script>
+const meuUsuario = "{usuario}";
+const avatarExemplo = "{avatar_usuario}";
+function decoracaoPreviaHtml(d) {
+    if (d.tipo === "cor") return `<span class="decoracao-overlay-cor" style="--cor-decoracao:${d.cor}"></span>`;
+    return `<img class="decoracao-overlay" src="${d.imagem_url}">`;
+}
+async function carregarLoja() {
+    const r = await fetch("/cpacord/loja");
+    const dados = await r.json();
+    const div = document.getElementById("gradeDecoracoes");
+    div.innerHTML = "";
+    if (dados.decoracoes.length === 0) { div.innerHTML = '<div class="vazio-cpacord">Nenhuma decoracao a venda ainda.</div>'; return; }
+    dados.decoracoes.forEach(d => {
+        const cartao = document.createElement("div");
+        cartao.className = "cartao-decoracao";
+        let botao = "";
+        if (d.status === "equipada") botao = `<button class="botao-decoracao equipada" onclick="desequipar()">Equipada &#10003;</button>`;
+        else if (d.status === "possui") botao = `<button class="botao-decoracao equipar" onclick="equipar(${d.id})">Equipar</button>`;
+        else if (d.status === "pendente") botao = `<button class="botao-decoracao pendente" disabled>Aguardando pagamento</button><label class="link-comprovante" for="comprovante-${d.id}">Anexar comprovante</label><input type="file" id="comprovante-${d.id}" accept="image/*" style="display:none" onchange="enviarComprovante(${d.id}, this)">`;
+        else botao = `<button class="botao-decoracao comprar" onclick="comprar(${d.id})">Comprar</button>`;
+        cartao.innerHTML = `
+          <div class="previa-decoracao-wrap"><img class="avatar-exemplo" src="${avatarExemplo}">${decoracaoPreviaHtml(d)}</div>
+          <div class="nome-decoracao">${d.nome}</div>
+          <div class="preco-decoracao">${d.preco}</div>
+          ${botao}`;
+        div.appendChild(cartao);
+    });
+}
+async function comprar(id) {
+    const arquivo = window._comprovanteNaCompra || null;
+    const form = new FormData();
+    form.append("decoracao_id", id);
+    if (arquivo) form.append("comprovante", arquivo);
+    const r = await fetch("/cpacord/comprar", { method: "POST", body: form });
+    const d = await r.json();
+    window._comprovanteNaCompra = null;
+    if (!d.ok) { alert(d.erro || "Nao foi possivel comprar."); return; }
+    alert("Pedido feito! Fale com o dono do app (via ZAP) pra combinar o pagamento. Assim que ele confirmar, a decoracao e liberada aqui.");
+    carregarLoja();
+}
+async function enviarComprovante(id, input) {
+    const arquivo = input.files[0];
+    if (!arquivo) return;
+    const form = new FormData();
+    form.append("decoracao_id", id); form.append("comprovante", arquivo);
+    const r = await fetch("/cpacord/enviar_comprovante", { method: "POST", body: form });
+    const d = await r.json();
+    alert(d.ok ? "Comprovante enviado! Aguarde a confirmacao do dono." : (d.erro || "Erro ao enviar."));
+}
+async function equipar(id) {
+    await fetch("/cpacord/equipar", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({decoracao_id: id}) });
+    carregarLoja();
+}
+async function desequipar() {
+    await fetch("/cpacord/desequipar", { method: "POST" });
+    carregarLoja();
+}
+function alternarTipoDecoracao() {
+    const tipo = document.querySelector('input[name="tipoDecoracao"]:checked').value;
+    document.getElementById("blocoImagemDec").style.display = tipo === "imagem" ? "block" : "none";
+    document.getElementById("blocoCorDec").style.display = tipo === "cor" ? "block" : "none";
+}
+async function criarDecoracao() {
+    const nome = document.getElementById("novaDecNome").value.trim();
+    const preco = document.getElementById("novaDecPreco").value.trim();
+    const tipo = document.querySelector('input[name="tipoDecoracao"]:checked').value;
+    const resultado = document.getElementById("resultadoNovaDec");
+    if (!nome || !preco) { resultado.textContent = "Preencha nome e preco."; return; }
+    const form = new FormData();
+    form.append("nome", nome); form.append("preco", preco); form.append("tipo", tipo);
+    if (tipo === "cor") {
+        form.append("cor", document.getElementById("novaDecCor").value);
+    } else {
+        const arquivo = document.getElementById("novaDecImagem").files[0];
+        if (!arquivo) { resultado.textContent = "Escolha uma imagem, ou marque 'so cor'."; return; }
+        form.append("imagem", arquivo);
+    }
+    const r = await fetch("/cpacord/admin/criar_decoracao", { method: "POST", body: form });
+    const d = await r.json();
+    resultado.textContent = d.ok ? "Decoracao criada!" : (d.erro || "Erro.");
+    if (d.ok) { document.getElementById("novaDecNome").value = ""; document.getElementById("novaDecPreco").value = ""; carregarLoja(); }
+}
+function abrirComprovante(url) {
+    document.getElementById("imgComprovante").src = url;
+    document.getElementById("modalComprovante").classList.add("aberto");
+}
+function fecharComprovante() { document.getElementById("modalComprovante").classList.remove("aberto"); }
+async function carregarPedidosAdmin() {
+    const div = document.getElementById("listaPedidosAdmin");
+    if (!div) return;
+    const r = await fetch("/cpacord/admin/pedidos");
+    const pedidos = await r.json();
+    div.innerHTML = "";
+    if (pedidos.length === 0) { div.innerHTML = "<div style='color:#777;padding:8px 0;'>Nenhum pedido pendente.</div>"; return; }
+    pedidos.forEach(p => {
+        const linha = document.createElement("div");
+        linha.className = "pedido-linha";
+        const linkComprovante = p.comprovante_url ? `<span class="link-comprovante" onclick="abrirComprovante('${p.comprovante_url}')">ver comprovante</span>` : `<span style="color:#666;">sem comprovante</span>`;
+        linha.innerHTML = `<img class="avatar-pedido" src="${p.avatar}"><div class="info-pedido">${p.usuario} #${p.id_publico} quer <b>${p.decoracao_nome}</b> (${p.preco})<br>${linkComprovante}</div><button class="pagar" onclick="marcarPago(${p.id})">Confirmar pago</button><button class="recusar" onclick="recusarPedido(${p.id})">Recusar</button>`;
+        div.appendChild(linha);
+    });
+}
+async function marcarPago(id) {
+    await fetch("/cpacord/admin/marcar_pago", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({compra_id: id}) });
+    carregarPedidosAdmin(); carregarLoja();
+}
+async function recusarPedido(id) {
+    await fetch("/cpacord/admin/recusar", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({compra_id: id}) });
+    carregarPedidosAdmin(); carregarLoja();
+}
+carregarLoja();
+carregarPedidosAdmin();
+</script>
+</body></html>
+"""
+
 PAGINA_SUPORTE = """
 <!DOCTYPE html>
 <html lang="pt-BR"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
@@ -4511,6 +4692,10 @@ body { display:flex; height:100vh; overflow:hidden; }
 .item-contato { display:flex; align-items:center; gap:10px; padding:12px 14px; cursor:pointer; border-bottom:1px solid #ffffff11; }
 .item-contato:hover, .item-contato.ativo { background:#1a1a1a; }
 .item-contato img { width:38px; height:38px; border-radius:50%; object-fit:cover; }
+.avatar-mini-decorado { position:relative; width:38px; height:38px; flex-shrink:0; }
+.avatar-mini-decorado img { position:absolute; top:3px; left:3px; width:32px; height:32px; }
+.avatar-mini-decorado img.decoracao-mini { top:0; left:0; width:38px; height:38px; pointer-events:none; }
+.decoracao-mini-cor { position:absolute; inset:0; border-radius:50%; pointer-events:none; border:2px solid var(--cor-decoracao,#3ddc6a); box-shadow:0 0 6px 0 var(--cor-decoracao,#3ddc6a); }
 .item-contato .nome { font-size:14px; }
 .item-contato .idc { font-size:11px; color:#888; }
 .vazio-contatos { padding:20px; color:#777; font-size:13px; text-align:center; }
@@ -4614,7 +4799,15 @@ async function carregarContatos() {
         const div = document.createElement("div");
         div.className = "item-contato" + (contatoAtual === c.usuario ? " ativo" : "");
         div.onclick = () => abrirConversa(c);
-        div.innerHTML = `<img src="${c.avatar}"><div><div class="nome">${c.usuario}</div><div class="idc">#${c.id_publico}</div></div>`;
+        let avatarHtml;
+        if (c.decoracao_tipo === "cor" && c.decoracao_cor) {
+            avatarHtml = `<div class="avatar-mini-decorado"><img src="${c.avatar}"><span class="decoracao-mini-cor" style="--cor-decoracao:${c.decoracao_cor}"></span></div>`;
+        } else if (c.decoracao_tipo === "imagem" && c.decoracao_imagem) {
+            avatarHtml = `<div class="avatar-mini-decorado"><img src="${c.avatar}"><img class="decoracao-mini" src="${c.decoracao_imagem}"></div>`;
+        } else {
+            avatarHtml = `<img src="${c.avatar}">`;
+        }
+        div.innerHTML = `${avatarHtml}<div><div class="nome">${c.usuario}</div><div class="idc">#${c.id_publico}</div></div>`;
         lista.appendChild(div);
     });
 }
@@ -4761,13 +4954,64 @@ let indiceCandidatosRecebidos = 0, pollCandidatos = null, pollStatusLigacao = nu
 let mutadoLocal = false;
 let cameraLigada = false;
 let chamadaComVideo = false;
+let telaCompartilhada = false;
+let streamTelaAtual = null;
+let trackCameraGuardada = null;
 function botoesEmChamadaHtml() {
     let html = '<button class="botao-chamada-circulo" id="botaoMudo" style="background:#333;color:#fff;" onclick="alternarMudo()">' + (mutadoLocal ? '&#128263;' : '&#127908;') + '</button>';
     if (chamadaComVideo) {
         html += '<button class="botao-chamada-circulo" id="botaoCamera" style="background:#333;color:#fff;" onclick="alternarCamera()">' + (cameraLigada ? '&#128249;' : '&#128683;') + '</button>';
     }
+    html += '<button class="botao-chamada-circulo" id="botaoTela" style="background:' + (telaCompartilhada ? '#3ddc6a' : '#333') + ';color:#fff;" onclick="alternarCompartilharTela()" title="Compartilhar tela">&#128421;</button>';
     html += '<button class="botao-chamada-circulo encerrar" onclick="encerrarChamada(true)">&#128222;</button>';
     return html;
+}
+function atualizarBotoesChamadaSeEmChamada() {
+    const div = document.getElementById("botoesChamada");
+    if (div && div.querySelector(".encerrar")) div.innerHTML = botoesEmChamadaHtml();
+}
+async function alternarCompartilharTela() {
+    if (!pc) return;
+    if (telaCompartilhada) { pararCompartilharTela(); return; }
+    try {
+        streamTelaAtual = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+        const trackTela = streamTelaAtual.getVideoTracks()[0];
+        const remetenteVideo = pc.getSenders().find(s => s.track && s.track.kind === "video");
+        if (remetenteVideo) {
+            trackCameraGuardada = remetenteVideo.track;
+            await remetenteVideo.replaceTrack(trackTela);
+        } else {
+            pc.addTrack(trackTela, streamTelaAtual);
+        }
+        const videoLocal = document.getElementById("videoLocal");
+        videoLocal.srcObject = streamTelaAtual;
+        videoLocal.classList.add("ativo");
+        chamadaComVideo = true;
+        telaCompartilhada = true;
+        trackTela.onended = () => pararCompartilharTela();
+        atualizarBotoesChamadaSeEmChamada();
+    } catch (e) {
+        alert("Nao foi possivel compartilhar a tela. Seu navegador precisa suportar essa funcao.");
+    }
+}
+function pararCompartilharTela() {
+    if (streamTelaAtual) { streamTelaAtual.getTracks().forEach(t => t.stop()); streamTelaAtual = null; }
+    if (pc) {
+        const remetenteVideo = pc.getSenders().find(s => s.track && s.track.kind === "video");
+        if (remetenteVideo) {
+            if (trackCameraGuardada) remetenteVideo.replaceTrack(trackCameraGuardada);
+            else remetenteVideo.replaceTrack(null);
+        }
+    }
+    const videoLocal = document.getElementById("videoLocal");
+    if (streamLocal && streamLocal.getVideoTracks().length && cameraLigada) {
+        videoLocal.srcObject = streamLocal;
+    } else {
+        videoLocal.classList.remove("ativo");
+        videoLocal.srcObject = null;
+    }
+    telaCompartilhada = false;
+    atualizarBotoesChamadaSeEmChamada();
 }
 function alternarMudo() {
     if (!streamLocal) return;
@@ -5085,6 +5329,9 @@ body { display:flex; flex-direction:column; height:100vh; }
 .lista-membros-grupo { font-size:13px; }
 .linha-membro-grupo { display:flex; align-items:center; gap:8px; padding:8px 0; border-bottom:1px solid #ffffff14; }
 .linha-membro-grupo img { width:30px; height:30px; border-radius:50%; object-fit:cover; background:#1a1a1a; }
+.linha-membro-grupo .avatar-mini-decorado { width:30px; height:30px; }
+.linha-membro-grupo .avatar-mini-decorado img { position:absolute; top:2px; left:2px; width:26px; height:26px; }
+.linha-membro-grupo .avatar-mini-decorado img.decoracao-mini { top:0; left:0; width:30px; height:30px; }
 .linha-membro-grupo .nome-membro { flex:1; }
 .linha-membro-grupo .tag-admin-membro { font-size:10px; color:#3ddc6a; margin-left:6px; }
 .linha-membro-grupo button { background:#1a1a1a; border:1px solid #ffffff22; color:#f2f2f2; font-size:11px; padding:5px 8px; border-radius:6px; cursor:pointer; margin-left:4px; }
@@ -5142,7 +5389,15 @@ async function abrirInfoGrupo() {
             botoes += `<button onclick="promoverMembroGrupo('${m.usuario}')">${m.admin ? "Remover admin" : "Tornar admin"}</button>`;
             botoes += `<button onclick="removerMembroGrupo('${m.usuario}')">Remover</button>`;
         }
-        return `<div class="linha-membro-grupo"><img src="${m.foto || ''}"><span class="nome-membro">${escaparHtml(m.usuario)}${m.admin ? '<span class="tag-admin-membro">ADMIN</span>' : ''}</span>${botoes}</div>`;
+        let avatarHtml;
+        if (m.decoracao_tipo === "cor" && m.decoracao_cor) {
+            avatarHtml = `<div class="avatar-mini-decorado"><img src="${m.foto || ''}"><span class="decoracao-mini-cor" style="--cor-decoracao:${m.decoracao_cor}"></span></div>`;
+        } else if (m.decoracao_tipo === "imagem" && m.decoracao_imagem) {
+            avatarHtml = `<div class="avatar-mini-decorado"><img src="${m.foto || ''}"><img class="decoracao-mini" src="${m.decoracao_imagem}"></div>`;
+        } else {
+            avatarHtml = `<img src="${m.foto || ''}">`;
+        }
+        return `<div class="linha-membro-grupo">${avatarHtml}<span class="nome-membro">${escaparHtml(m.usuario)}${m.admin ? '<span class="tag-admin-membro">ADMIN</span>' : ''}</span>${botoes}</div>`;
     }).join("");
 }
 function fecharInfoGrupo() { document.getElementById("folhaGrupo").classList.remove("aberta"); }
@@ -5478,8 +5733,6 @@ def inicio():
     pagina = PAGINA_INICIO.replace("{fundo_url}", obter_config("fundo_inicio", FUNDO_INICIO_URL))
     pagina = pagina.replace("{qtd_online}", str(contar_online()))
     pagina = pagina.replace("{qtd_contas}", str(contar_contas()))
-    pagina = pagina.replace("{nome_marca}", obter_config("nome_marca", "CHAT CPA"))
-    pagina = pagina.replace("{apps_inicio}", obter_aplicativos_inicio())
 
     def icone_img(chave, letra, padrao=None):
         url = obter_config(chave) or padrao
@@ -5489,6 +5742,7 @@ def inicio():
     pagina = pagina.replace("{icone_jarvis}", icone_img("icone_jarvis", "C", "/static/logo.jpg"))
     pagina = pagina.replace("{icone_zap}", icone_img("icone_zap", "Z"))
     pagina = pagina.replace("{icone_suporte}", icone_img("icone_suporte", "S"))
+    pagina = pagina.replace("{icone_cpacord}", icone_img("icone_cpacord", "&#128142;"))
     pagina = pagina.replace("{icone_app_url}", obter_config("icone_app", "/static/logo.jpg"))
     return pagina
 
@@ -5513,8 +5767,8 @@ def favicon():
 def manifest_json():
     icone = obter_config("icone_app", "/static/logo.jpg")
     manifest = {
-        "name": obter_config("nome_marca", "CHAT CPA"),
-        "short_name": obter_config("nome_marca", "CHAT CPA"),
+        "name": "CHAT CPA",
+        "short_name": "CHAT CPA",
         "start_url": "/inicio",
         "scope": "/",
         "display": "standalone",
@@ -5713,7 +5967,6 @@ def rede():
               <button class="ativa" onclick="mudarAbaAdmin('selo', this)">Selo</button>
               <button onclick="mudarAbaAdmin('tags', this)">Tags</button>
               <button onclick="mudarAbaAdmin('icones', this)">Icones</button>
-              <button onclick="mudarAbaAdmin('apps', this)">Aplicativos</button>
               <button onclick="mudarAbaAdmin('ids', this)">IDs</button>
               <button onclick="mudarAbaAdmin('zap', this)">ZAP</button>
             </div>
@@ -5773,44 +6026,6 @@ def rede():
               </div>
               <div class="resultado-admin" id="resultadoFundo"></div>
               <div class="resultado-admin" id="resultadoIcones"></div>
-            </div>
-
-            <div class="painel-admin-secao" id="secaoAdmin-apps">
-              <b>Gerenciador de aplicativos</b><br>
-              Altere o nome exibido dos apps sem alterar as rotas internas. Somente o dono pode fazer isso.
-              <div id="listaAppsAdmin" style="margin-top:12px;"></div>
-              <div class="resultado-admin" id="resultadoApps"></div>
-              <script>
-              async function carregarAppsAdmin() {
-                const box = document.getElementById('listaAppsAdmin');
-                if (!box) return;
-                box.innerHTML = 'Carregando...';
-                try {
-                  const r = await fetch('/admin/apps');
-                  const d = await r.json();
-                  if (!d.ok) { box.textContent = d.erro || 'Sem permissao.'; return; }
-                  box.innerHTML = (d.apps || []).map(a => `
-                    <div style="border:1px solid #ffffff22;border-radius:10px;padding:10px;margin-bottom:8px;">
-                      <div style="font-weight:bold;margin-bottom:6px;">${a.slug}</div>
-                      <div class="linha-admin">
-                        <input id="nomeApp_${a.slug}" type="text" value="${String(a.nome).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\"/g,'&quot;')}" placeholder="Nome do aplicativo">
-                        <button class="acao" onclick="salvarNomeApp('${a.slug}')">Salvar nome</button>
-                      </div>
-                      <div style="font-size:11px;color:#888;margin-top:4px;">Rota: ${a.rota}</div>
-                    </div>`).join('');
-                } catch(e) { box.textContent = 'Erro ao carregar aplicativos.'; }
-              }
-              async function salvarNomeApp(slug) {
-                const campo = document.getElementById('nomeApp_' + slug);
-                const nome = campo ? campo.value.trim() : '';
-                const resultado = document.getElementById('resultadoApps');
-                if (!nome) { resultado.textContent = 'Digite um nome.'; return; }
-                const r = await fetch('/admin/apps/update', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({slug:slug,nome:nome})});
-                const d = await r.json();
-                resultado.textContent = d.ok ? 'Nome salvo. Atualize a tela inicial para ver a alteração.' : (d.erro || 'Erro.');
-              }
-              carregarAppsAdmin();
-              </script>
             </div>
 
             <div class="painel-admin-secao" id="secaoAdmin-ids">
@@ -5906,6 +6121,7 @@ def perfil(nome_usuario):
         botao_seguir = f'<button class="botao-seguir {classe_ativo}" onclick="seguirPerfil(\'{nome_real}\')">{texto_botao}</button>'
         editor_perfil = ""
     pagina = PAGINA_PERFIL.replace("{nome_usuario}", nome_real).replace("{avatar_url}", avatar).replace("{selo}", selo)
+    pagina = pagina.replace("{decoracao_html}", html_decoracao_avatar(nome_real, "decoracao-perfil"))
     pagina = pagina.replace("{id_publico}", str(linha_alvo["id_publico"] or "-"))
     pagina = pagina.replace("{banner_html}", banner_html).replace("{bio_html}", bio_html)
     pagina = pagina.replace("{qtd_posts}", str(len(posts))).replace("{qtd_seguidores}", str(qtd_seguidores)).replace("{qtd_seguindo}", str(qtd_seguindo))
@@ -6034,11 +6250,15 @@ def rede_feed():
         verificado = bool(linha_autor and linha_autor["verificado"])
         avatar = (linha_autor["foto_perfil"] if linha_autor and linha_autor["foto_perfil"] else AVATAR_PADRAO + p["usuario"])
         tag_html = html_tag(linha_autor["tag"] if linha_autor else None)
+        dec = obter_decoracao_ativa(p["usuario"])
         resultado.append({
             "id": p["id"], "usuario": p["usuario"], "texto": p["texto"], "imagem": p["imagem"], "video": p["video"],
             "avatar": avatar, "curtidas": curtidas, "curtido": curtido, "seguindo": seguindo, "verificado": verificado,
             "salvo": salvo, "selo_html": selo_verificado_html(14) if verificado else "",
             "tag_html": tag_html,
+            "decoracao_tipo": dec["tipo"] if dec else None,
+            "decoracao_imagem": dec["imagem_url"] if dec else None,
+            "decoracao_cor": dec["cor"] if dec else None,
             "comentarios": [{"usuario": c["usuario"], "texto": c["texto"]} for c in comentarios],
         })
     conexao.close()
@@ -6179,38 +6399,6 @@ def rede_atribuir_tag():
     return jsonify({"ok": True})
 
 
-@app.route("/admin/apps")
-def admin_apps():
-    if not eh_desenvolvedor(session.get("usuario")):
-        return jsonify({"ok": False, "erro": "Sem permissao."}), 403
-    conexao = obter_bd()
-    linhas = conexao.execute("SELECT slug,nome,descricao,rota,ativo,ordem FROM aplicativos ORDER BY ordem ASC, nome ASC").fetchall()
-    conexao.close()
-    return jsonify({"ok": True, "apps": [dict(l) for l in linhas]})
-
-
-@app.route("/admin/apps/update", methods=["POST"])
-def admin_apps_update():
-    if not eh_desenvolvedor(session.get("usuario")):
-        return jsonify({"ok": False, "erro": "Sem permissao."}), 403
-    dados = request.get_json(silent=True) or {}
-    slug = (dados.get("slug") or "").strip()
-    nome = (dados.get("nome") or "").strip()
-    if not slug or not nome:
-        return jsonify({"ok": False, "erro": "Slug e nome sao obrigatorios."}), 400
-    if len(nome) > 40:
-        return jsonify({"ok": False, "erro": "O nome deve ter no maximo 40 caracteres."}), 400
-    conexao = obter_bd()
-    existe = conexao.execute("SELECT 1 FROM aplicativos WHERE slug = ?", (slug,)).fetchone()
-    if not existe:
-        conexao.close()
-        return jsonify({"ok": False, "erro": "Aplicativo nao encontrado."}), 404
-    conexao.execute("UPDATE aplicativos SET nome = ?, atualizado_em = ? WHERE slug = ?", (nome, datetime.now().isoformat(), slug))
-    conexao.commit()
-    conexao.close()
-    return jsonify({"ok": True, "slug": slug, "nome": nome})
-
-
 @app.route("/admin/config", methods=["POST"])
 def admin_config():
     """Painel do dono: define os icones de cada app e a imagem do selo verificado."""
@@ -6271,6 +6459,288 @@ def admin_zap_historico(conversa):
             conteudo = decifrado if decifrado is not None else "[nao foi possivel decifrar]"
         mensagens.append({"id": l["id"], "remetente": l["remetente"], "tipo": l["tipo"], "conteudo": conteudo, "criado_em": l["criado_em"]})
     return jsonify({"mensagens": mensagens})
+
+
+def obter_decoracao_ativa(usuario):
+    """Retorna a decoracao equipada pela conta (tipo 'imagem' ou 'cor'), ou None."""
+    conexao = obter_bd()
+    linha = conexao.execute(
+        "SELECT d.tipo, d.imagem_url, d.cor FROM usuarios u JOIN decoracoes d ON d.id = u.decoracao_ativa "
+        "WHERE u.usuario = ? COLLATE NOCASE AND d.ativo = 1",
+        (usuario,),
+    ).fetchone()
+    conexao.close()
+    if not linha:
+        return None
+    return {"tipo": linha["tipo"] or "imagem", "imagem_url": linha["imagem_url"], "cor": linha["cor"]}
+
+
+def html_decoracao_avatar(usuario, css_classe="decoracao-perfil"):
+    """Monta o HTML da decoracao equipada: uma imagem sobreposta (animada) ou
+    um anel colorido puro CSS (pra quando ainda nao existe imagem pronta)."""
+    dec = obter_decoracao_ativa(usuario)
+    if not dec:
+        return ""
+    if dec["tipo"] == "cor" and dec["cor"]:
+        return f'<span class="{css_classe} {css_classe}-cor" style="--cor-decoracao:{dec["cor"]};"></span>'
+    if dec["imagem_url"]:
+        return f'<img class="{css_classe}" src="{dec["imagem_url"]}">'
+    return ""
+
+
+@app.route("/cpacord")
+def cpacord():
+    if not session.get("usuario"):
+        return redirect(url_for("login"))
+    usuario = session["usuario"]
+    linha = buscar_usuario(usuario)
+    avatar_usuario = linha["foto_perfil"] if linha and linha["foto_perfil"] else AVATAR_PADRAO + usuario
+    painel_admin_html = ""
+    if eh_desenvolvedor(usuario):
+        painel_admin_html = """
+        <div class="painel-admin-cpacord">
+          <b>Painel do dono</b>
+          <label style="display:block;margin-top:10px;font-size:12px;color:#999;">Nova decoracao</label>
+          <input id="novaDecNome" type="text" placeholder="Nome da decoracao">
+          <input id="novaDecPreco" type="text" placeholder="Preco (ex: R$ 5,00)">
+          <div>
+            <label class="opcao-tipo"><input type="radio" name="tipoDecoracao" value="imagem" checked onchange="alternarTipoDecoracao()"> Imagem animada</label>
+            <label class="opcao-tipo"><input type="radio" name="tipoDecoracao" value="cor" onchange="alternarTipoDecoracao()"> So cor (sem imagem)</label>
+          </div>
+          <div id="blocoImagemDec"><input id="novaDecImagem" type="file" accept="image/*"></div>
+          <div id="blocoCorDec" style="display:none;"><input id="novaDecCor" type="color" value="#3ddc6a" style="height:42px;padding:4px;"></div>
+          <button class="acao" onclick="criarDecoracao()">Criar decoracao</button>
+          <div class="resultado-admin" id="resultadoNovaDec" style="margin-top:6px;color:#fff;font-size:12px;"></div>
+          <label style="display:block;margin-top:14px;font-size:12px;color:#999;">Pedidos pendentes</label>
+          <div id="listaPedidosAdmin" style="margin-top:8px;"></div>
+        </div>
+        """
+    pagina = PAGINA_CPACORD.replace("{usuario}", usuario).replace("{avatar_usuario}", avatar_usuario)
+    pagina = pagina.replace("{painel_admin}", painel_admin_html)
+    return pagina
+
+
+@app.route("/cpacord/loja")
+def cpacord_loja():
+    if not session.get("usuario"):
+        return jsonify({"decoracoes": []}), 401
+    usuario = session["usuario"]
+    conexao = obter_bd()
+    decoracoes = conexao.execute("SELECT * FROM decoracoes WHERE ativo = 1 ORDER BY id DESC").fetchall()
+    equipada_id = None
+    linha_usuario = conexao.execute("SELECT decoracao_ativa FROM usuarios WHERE usuario = ? COLLATE NOCASE", (usuario,)).fetchone()
+    if linha_usuario:
+        equipada_id = linha_usuario["decoracao_ativa"]
+    resultado = []
+    for d in decoracoes:
+        status = "disponivel"
+        if d["id"] == equipada_id:
+            status = "equipada"
+        else:
+            compra = conexao.execute(
+                "SELECT status FROM compras_decoracoes WHERE usuario = ? COLLATE NOCASE AND decoracao_id = ? ORDER BY id DESC LIMIT 1",
+                (usuario, d["id"]),
+            ).fetchone()
+            if compra:
+                if compra["status"] in ("pago", "entregue"):
+                    status = "possui"
+                elif compra["status"] == "pendente":
+                    status = "pendente"
+        resultado.append({
+            "id": d["id"], "nome": d["nome"], "imagem_url": d["imagem_url"], "preco": d["preco"],
+            "status": status, "tipo": d["tipo"] or "imagem", "cor": d["cor"],
+        })
+    conexao.close()
+    return jsonify({"decoracoes": resultado})
+
+
+@app.route("/cpacord/comprar", methods=["POST"])
+def cpacord_comprar():
+    if not session.get("usuario"):
+        return jsonify({"ok": False}), 401
+    usuario = session["usuario"]
+    try:
+        decoracao_id = int(request.form.get("decoracao_id"))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "erro": "Decoracao invalida."})
+    conexao = obter_bd()
+    decoracao = conexao.execute("SELECT * FROM decoracoes WHERE id = ? AND ativo = 1", (decoracao_id,)).fetchone()
+    if not decoracao:
+        conexao.close()
+        return jsonify({"ok": False, "erro": "Decoracao nao encontrada."})
+    pedido_existente = conexao.execute(
+        "SELECT status FROM compras_decoracoes WHERE usuario = ? COLLATE NOCASE AND decoracao_id = ? ORDER BY id DESC LIMIT 1",
+        (usuario, decoracao_id),
+    ).fetchone()
+    if pedido_existente and pedido_existente["status"] in ("pendente", "pago", "entregue"):
+        conexao.close()
+        return jsonify({"ok": False, "erro": "Voce ja tem um pedido ou ja possui essa decoracao."})
+    comprovante_url = salvar_imagem(request.files.get("comprovante"))
+    conexao.execute(
+        "INSERT INTO compras_decoracoes (usuario, decoracao_id, status, comprovante_url, criado_em) VALUES (?, ?, 'pendente', ?, ?)",
+        (usuario, decoracao_id, comprovante_url, datetime.now().isoformat()),
+    )
+    conexao.commit()
+    conexao.close()
+    return jsonify({"ok": True})
+
+
+@app.route("/cpacord/enviar_comprovante", methods=["POST"])
+def cpacord_enviar_comprovante():
+    """Anexa (ou substitui) o comprovante de pagamento de um pedido pendente ja existente."""
+    if not session.get("usuario"):
+        return jsonify({"ok": False}), 401
+    usuario = session["usuario"]
+    try:
+        decoracao_id = int(request.form.get("decoracao_id"))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "erro": "Decoracao invalida."})
+    arquivo = request.files.get("comprovante")
+    if not arquivo:
+        return jsonify({"ok": False, "erro": "Escolha uma imagem do comprovante."})
+    comprovante_url = salvar_imagem(arquivo)
+    if not comprovante_url:
+        return jsonify({"ok": False, "erro": "Nao foi possivel enviar a imagem."})
+    conexao = obter_bd()
+    pedido = conexao.execute(
+        "SELECT id FROM compras_decoracoes WHERE usuario = ? COLLATE NOCASE AND decoracao_id = ? AND status = 'pendente' ORDER BY id DESC LIMIT 1",
+        (usuario, decoracao_id),
+    ).fetchone()
+    if not pedido:
+        conexao.close()
+        return jsonify({"ok": False, "erro": "Voce nao tem um pedido pendente dessa decoracao."})
+    conexao.execute("UPDATE compras_decoracoes SET comprovante_url = ? WHERE id = ?", (comprovante_url, pedido["id"]))
+    conexao.commit()
+    conexao.close()
+    return jsonify({"ok": True})
+
+
+@app.route("/cpacord/equipar", methods=["POST"])
+def cpacord_equipar():
+    if not session.get("usuario"):
+        return jsonify({"ok": False}), 401
+    usuario = session["usuario"]
+    dados = request.get_json() or {}
+    try:
+        decoracao_id = int(dados.get("decoracao_id"))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False}), 400
+    conexao = obter_bd()
+    possui = conexao.execute(
+        "SELECT 1 FROM compras_decoracoes WHERE usuario = ? COLLATE NOCASE AND decoracao_id = ? AND status IN ('pago','entregue')",
+        (usuario, decoracao_id),
+    ).fetchone()
+    if not possui:
+        conexao.close()
+        return jsonify({"ok": False, "erro": "Voce nao possui essa decoracao."})
+    conexao.execute("UPDATE usuarios SET decoracao_ativa = ? WHERE usuario = ? COLLATE NOCASE", (decoracao_id, usuario))
+    conexao.commit()
+    conexao.close()
+    return jsonify({"ok": True})
+
+
+@app.route("/cpacord/desequipar", methods=["POST"])
+def cpacord_desequipar():
+    if not session.get("usuario"):
+        return jsonify({"ok": False}), 401
+    conexao = obter_bd()
+    conexao.execute("UPDATE usuarios SET decoracao_ativa = NULL WHERE usuario = ? COLLATE NOCASE", (session["usuario"],))
+    conexao.commit()
+    conexao.close()
+    return jsonify({"ok": True})
+
+
+@app.route("/cpacord/admin/criar_decoracao", methods=["POST"])
+def cpacord_admin_criar_decoracao():
+    if not eh_desenvolvedor(session.get("usuario")):
+        return jsonify({"ok": False, "erro": "Sem permissao."}), 403
+    nome = request.form.get("nome", "").strip()
+    preco = request.form.get("preco", "").strip()
+    tipo = request.form.get("tipo", "imagem").strip()
+    cor = request.form.get("cor", "").strip()
+    if not nome or not preco:
+        return jsonify({"ok": False, "erro": "Preencha nome e preco."})
+    url = None
+    if tipo == "cor":
+        if not cor:
+            return jsonify({"ok": False, "erro": "Escolha uma cor."})
+    else:
+        tipo = "imagem"
+        arquivo = request.files.get("imagem")
+        if not arquivo:
+            return jsonify({"ok": False, "erro": "Escolha uma imagem, ou marque 'so cor' se ainda nao tiver arte pronta."})
+        url = salvar_imagem(arquivo)
+        if not url:
+            return jsonify({"ok": False, "erro": "Nao foi possivel enviar a imagem."})
+    conexao = obter_bd()
+    conexao.execute(
+        "INSERT INTO decoracoes (nome, imagem_url, preco, ativo, tipo, cor, criado_em) VALUES (?, ?, ?, 1, ?, ?, ?)",
+        (nome, url, preco, tipo, cor or None, datetime.now().isoformat()),
+    )
+    conexao.commit()
+    conexao.close()
+    return jsonify({"ok": True})
+
+
+@app.route("/cpacord/admin/pedidos")
+def cpacord_admin_pedidos():
+    if not eh_desenvolvedor(session.get("usuario")):
+        return jsonify([]), 403
+    conexao = obter_bd()
+    pedidos = conexao.execute(
+        "SELECT c.id, c.usuario, c.comprovante_url, d.nome AS decoracao_nome, d.preco FROM compras_decoracoes c "
+        "JOIN decoracoes d ON d.id = c.decoracao_id WHERE c.status = 'pendente' ORDER BY c.id ASC"
+    ).fetchall()
+    resultado = []
+    for p in pedidos:
+        u = buscar_usuario(p["usuario"])
+        resultado.append({
+            "id": p["id"], "usuario": p["usuario"],
+            "id_publico": u["id_publico"] if u else "-",
+            "avatar": (u["foto_perfil"] if u and u["foto_perfil"] else AVATAR_PADRAO + p["usuario"]),
+            "decoracao_nome": p["decoracao_nome"], "preco": p["preco"],
+            "comprovante_url": p["comprovante_url"],
+        })
+    conexao.close()
+    return jsonify(resultado)
+
+
+@app.route("/cpacord/admin/marcar_pago", methods=["POST"])
+def cpacord_admin_marcar_pago():
+    if not eh_desenvolvedor(session.get("usuario")):
+        return jsonify({"ok": False, "erro": "Sem permissao."}), 403
+    dados = request.get_json() or {}
+    try:
+        compra_id = int(dados.get("compra_id"))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False}), 400
+    conexao = obter_bd()
+    conexao.execute(
+        "UPDATE compras_decoracoes SET status = 'pago', atualizado_em = ? WHERE id = ?",
+        (datetime.now().isoformat(), compra_id),
+    )
+    conexao.commit()
+    conexao.close()
+    return jsonify({"ok": True})
+
+
+@app.route("/cpacord/admin/recusar", methods=["POST"])
+def cpacord_admin_recusar():
+    if not eh_desenvolvedor(session.get("usuario")):
+        return jsonify({"ok": False, "erro": "Sem permissao."}), 403
+    dados = request.get_json() or {}
+    try:
+        compra_id = int(dados.get("compra_id"))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False}), 400
+    conexao = obter_bd()
+    conexao.execute(
+        "UPDATE compras_decoracoes SET status = 'recusado', atualizado_em = ? WHERE id = ?",
+        (datetime.now().isoformat(), compra_id),
+    )
+    conexao.commit()
+    conexao.close()
+    return jsonify({"ok": True})
 
 
 @app.route("/suporte")
@@ -6458,7 +6928,14 @@ def zap_contatos():
         if not u:
             continue
         avatar = u["foto_perfil"] if u["foto_perfil"] else AVATAR_PADRAO + u["usuario"]
-        resultado.append({"usuario": u["usuario"], "id_publico": u["id_publico"], "avatar": avatar, "bloqueado": usuario_bloqueou(usuario, u["usuario"])})
+        dec = obter_decoracao_ativa(u["usuario"])
+        resultado.append({
+            "usuario": u["usuario"], "id_publico": u["id_publico"], "avatar": avatar,
+            "bloqueado": usuario_bloqueou(usuario, u["usuario"]),
+            "decoracao_tipo": dec["tipo"] if dec else None,
+            "decoracao_imagem": dec["imagem_url"] if dec else None,
+            "decoracao_cor": dec["cor"] if dec else None,
+        })
     conexao.close()
     return jsonify(resultado)
 
@@ -6971,7 +7448,10 @@ def zap_grupo_info(grupo_id):
     return jsonify({
         "ok": True, "nome": grupo["nome"], "foto": grupo["foto"], "verificado": bool(grupo["verificado"]),
         "sou_admin": _admin_do_grupo(grupo_id, usuario),
-        "membros": [{"usuario": m["usuario"], "admin": bool(m["admin"]), "foto": m["foto_perfil"]} for m in membros],
+        "membros": [{
+            "usuario": m["usuario"], "admin": bool(m["admin"]), "foto": m["foto_perfil"],
+            **(lambda dec: {"decoracao_tipo": dec["tipo"], "decoracao_imagem": dec["imagem_url"], "decoracao_cor": dec["cor"]} if dec else {"decoracao_tipo": None, "decoracao_imagem": None, "decoracao_cor": None})(obter_decoracao_ativa(m["usuario"])),
+        } for m in membros],
     })
 
 
