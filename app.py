@@ -505,6 +505,30 @@ def iniciar_bd():
             dados TEXT NOT NULL, criado_em TEXT NOT NULL, consumido INTEGER DEFAULT 0
         )
     """)
+    # ---------- Cargos (roles) por servidor, igual Discord ----------
+    conexao.execute("""
+        CREATE TABLE IF NOT EXISTS cpacord_cargos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, servidor_id INTEGER NOT NULL, nome TEXT NOT NULL,
+            cor TEXT NOT NULL DEFAULT '#99aab5', silenciado INTEGER DEFAULT 0, ordem INTEGER DEFAULT 0,
+            criado_em TEXT NOT NULL
+        )
+    """)
+    conexao.execute("""
+        CREATE TABLE IF NOT EXISTS cpacord_membro_cargos (
+            servidor_id INTEGER NOT NULL, usuario TEXT NOT NULL, cargo_id INTEGER NOT NULL,
+            PRIMARY KEY (servidor_id, usuario, cargo_id)
+        )
+    """)
+    # ---------- Perfil do servidor (banner/cor/descricao), igual "Perfil do servidor" do Discord ----------
+    for coluna, tipo in [("banner", "TEXT"), ("cor_faixa", "TEXT"), ("descricao", "TEXT"), ("verificacao_obrigatoria", "INTEGER DEFAULT 0"), ("regras_verificacao", "TEXT")]:
+        try:
+            conexao.execute(f"ALTER TABLE cpacord_servidores ADD COLUMN {coluna} {tipo}")
+        except sqlite3.OperationalError:
+            pass
+    try:
+        conexao.execute("ALTER TABLE cpacord_membros ADD COLUMN verificado INTEGER DEFAULT 1")
+    except sqlite3.OperationalError:
+        pass
     existe_dev_tag = conexao.execute("SELECT 1 FROM tags WHERE nome = 'DEV'").fetchone()
     if not existe_dev_tag:
         conexao.execute("INSERT INTO tags (nome, cor, foto) VALUES ('DEV', '#ffffff', NULL)")
@@ -4507,11 +4531,17 @@ body { display:flex; height:100vh; overflow:hidden; }
 .participante-voz { display:flex; flex-direction:column; align-items:center; gap:8px; }
 .participante-voz img { width:64px; height:64px; border-radius:50%; object-fit:cover; border:2px solid #3ddc6a; }
 .participante-voz.falando img { box-shadow:0 0 0 4px #3ddc6a55; }
+.participante-voz.falando span { color:#3ddc6a; }
 .botoes-voz { display:flex; gap:14px; }
 .botoes-voz button { width:52px; height:52px; border-radius:50%; border:none; font-size:20px; cursor:pointer; background:#1a1a1a; color:#fff; }
 .botoes-voz button.entrar { background:#3ddc6a; color:#000; }
 .botoes-voz button.sair { background:#ff4d4d; color:#fff; }
 .vazio-canal { flex:1; display:flex; align-items:center; justify-content:center; color:#666; }
+.portao-verificacao { flex:1; display:flex; align-items:center; justify-content:center; padding:20px; }
+.portao-verificacao-caixa { background:#0d0d0d; border:1px solid #ffffff22; border-radius:14px; padding:24px; max-width:360px; text-align:center; }
+.portao-verificacao-caixa h3 { margin-top:0; }
+.portao-verificacao-caixa p { color:#aaa; font-size:13px; white-space:pre-wrap; margin-bottom:18px; }
+.portao-verificacao-caixa button { padding:10px 18px; border-radius:8px; border:none; background:#3ddc6a; color:#000; font-weight:bold; cursor:pointer; }
 .painel-membros-servidor { display:none; width:200px; flex-shrink:0; background:#0d0d0d; border-left:1px solid #ffffff22; padding:14px 10px; overflow-y:auto; }
 .painel-membros-servidor.aberto { display:block; }
 .topo-painel-membros { font-size:11px; color:#888; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:10px; padding:0 6px; }
@@ -4522,6 +4552,36 @@ body { display:flex; height:100vh; overflow:hidden; }
 .linha-membro-servidor .avatar-mini-decorado img { position:absolute; top:2px; left:2px; width:24px; height:24px; border-radius:50%; object-fit:cover; }
 .linha-membro-servidor .avatar-mini-decorado img.decoracao-mini { top:0; left:0; width:28px; height:28px; pointer-events:none; }
 .linha-membro-servidor .decoracao-mini-cor { position:absolute; inset:0; border-radius:50%; pointer-events:none; border:2px solid var(--cor-decoracao,#3ddc6a); box-shadow:0 0 6px 0 var(--cor-decoracao,#3ddc6a); }
+.menu-config-servidor { display:none; position:absolute; top:28px; left:0; background:#111214; border:1px solid #ffffff22; border-radius:8px; padding:6px; width:220px; z-index:50; box-shadow:0 8px 24px #000000aa; }
+.menu-config-servidor.aberto { display:block; }
+.item-menu-config { padding:9px 10px; border-radius:6px; font-size:13px; font-weight:normal; cursor:pointer; color:#dcddde; }
+.item-menu-config:hover { background:#4752c4; color:#fff; }
+.item-menu-config.perigo { color:#ed4245; }
+.item-menu-config.perigo:hover { background:#ed4245; color:#fff; }
+.modal-fundo-cpacord { display:none; position:fixed; inset:0; background:#000000cc; z-index:200; align-items:center; justify-content:center; padding:16px; }
+.modal-fundo-cpacord.aberto { display:flex; }
+.modal-caixa-cpacord { background:#0d0d0d; border:1px solid #ffffff22; border-radius:12px; padding:18px; width:100%; max-width:380px; max-height:85vh; overflow-y:auto; }
+.modal-cpacord-topo { display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; font-size:15px; }
+.modal-cpacord-topo span { cursor:pointer; color:#888; font-size:20px; }
+.rotulo-modal { display:block; font-size:11px; color:#888; margin-top:10px; margin-bottom:4px; text-transform:uppercase; letter-spacing:0.4px; }
+.modal-caixa-cpacord input[type=text], .modal-caixa-cpacord textarea, .modal-caixa-cpacord input[type=file] { width:100%; padding:9px; border-radius:6px; border:1px solid #ffffff22; background:#000; color:#f2f2f2; font-family:inherit; }
+.modal-caixa-cpacord textarea { min-height:60px; resize:vertical; }
+.grade-cores-faixa { display:flex; gap:8px; flex-wrap:wrap; margin-top:4px; }
+.grade-cores-faixa .swatch-faixa { width:28px; height:28px; border-radius:50%; cursor:pointer; border:2px solid transparent; }
+.grade-cores-faixa .swatch-faixa.selecionada { border-color:#fff; }
+.botao-cpacord-primario { width:100%; padding:10px; border-radius:6px; border:none; background:#5865f2; color:#fff; font-weight:bold; cursor:pointer; margin-top:14px; }
+.msg-modal-cpacord { font-size:12px; color:#3ddc6a; margin-top:8px; min-height:14px; }
+.linha-criar-cargo { display:flex; gap:6px; align-items:center; margin-bottom:12px; }
+.linha-criar-cargo input[type=text] { flex:1; }
+.linha-criar-cargo input[type=color] { width:36px; height:36px; padding:0; border:none; border-radius:6px; background:none; cursor:pointer; }
+.linha-cargo { display:flex; align-items:center; gap:8px; padding:8px 4px; border-bottom:1px solid #ffffff14; font-size:13px; }
+.linha-cargo .bolinha-cargo { width:10px; height:10px; border-radius:50%; flex-shrink:0; }
+.linha-cargo .nome-cargo { flex:1; }
+.linha-cargo button { background:#1a1a1a; border:1px solid #ffffff22; color:#ccc; font-size:11px; padding:4px 8px; border-radius:5px; cursor:pointer; }
+.linha-cargo button.excluir-cargo { color:#ff6666; }
+.cargo-badge { display:inline-block; font-size:9px; padding:1px 6px; border-radius:8px; margin-left:5px; font-weight:bold; color:#000; vertical-align:middle; }
+.grupo-membros-cargo { font-size:11px; color:#888; text-transform:uppercase; letter-spacing:0.4px; margin:12px 0 6px; padding:0 6px; }
+.grupo-membros-cargo:first-child { margin-top:0; }
 @media (max-width:900px) { .painel-membros-servidor.aberto { position:fixed; right:0; top:0; bottom:0; z-index:25; } }
 @media (max-width:720px) {
   .sidebar-canais { position:fixed; z-index:20; height:100vh; left:64px; }
@@ -4535,7 +4595,18 @@ body { display:flex; height:100vh; overflow:hidden; }
 <div class="sidebar-canais" id="sidebarCanais">
   <div class="topo-servidor">
     <span class="nome-servidor" id="nomeServidorAtual">Carregando...</span>
-    <button class="botao-convite" onclick="mostrarConvite()" title="Convite">&#128279;</button>
+    <span style="position:relative;">
+      <button class="botao-convite" onclick="alternarMenuConfigServidor()" title="Configuracoes">&#9881;</button>
+      <div class="menu-config-servidor" id="menuConfigServidor">
+        <div class="item-menu-config" onclick="mostrarConvite()">&#128279; Convidar para o servidor</div>
+        <div class="item-menu-config" onclick="abrirModalPerfilServidor()">&#9881; Config. do servidor</div>
+        <div class="item-menu-config" onclick="criarCanal('texto')">&#65291; Criar canal</div>
+        <div class="item-menu-config" onclick="abrirModalCargos()">&#127991; Cargos</div>
+        <div class="item-menu-config" id="itemVerificacaoConfig" style="display:none;" onclick="abrirModalVerificacao()">&#9989; Verificacao</div>
+        <div class="item-menu-config" onclick="alternarPainelMembros()">&#128101; Membros</div>
+        <div class="item-menu-config perigo" id="itemExcluirServidor" style="display:none;" onclick="excluirServidorAtual()">&#128465; Excluir servidor</div>
+      </div>
+    </span>
   </div>
   <div class="lista-canais" id="listaCanais"></div>
   <div class="rodape-servidor"><span id="rodapeUsuario">{usuario}</span></div>
@@ -4552,6 +4623,50 @@ body { display:flex; height:100vh; overflow:hidden; }
   <div class="topo-painel-membros">Membros</div>
   <div id="listaMembrosServidor"></div>
 </div>
+
+<div class="modal-fundo-cpacord" id="modalPerfilServidor">
+  <div class="modal-caixa-cpacord">
+    <div class="modal-cpacord-topo"><b>Perfil do servidor</b><span onclick="fecharModal('modalPerfilServidor')">&times;</span></div>
+    <label class="rotulo-modal">Nome</label>
+    <input type="text" id="editarNomeServidor">
+    <label class="rotulo-modal">Descricao</label>
+    <textarea id="editarDescricaoServidor" placeholder="Do que se trata seu servidor?"></textarea>
+    <label class="rotulo-modal">Icone do servidor</label>
+    <input type="file" id="editarIconeServidor" accept="image/*">
+    <label class="rotulo-modal">Banner do servidor</label>
+    <input type="file" id="editarBannerServidor" accept="image/*">
+    <label class="rotulo-modal">Cor da faixa</label>
+    <div class="grade-cores-faixa" id="gradeCoresFaixa"></div>
+    <button class="botao-cpacord-primario" onclick="salvarPerfilServidor()">Salvar</button>
+    <div class="msg-modal-cpacord" id="msgPerfilServidor"></div>
+  </div>
+</div>
+
+<div class="modal-fundo-cpacord" id="modalCargos">
+  <div class="modal-caixa-cpacord">
+    <div class="modal-cpacord-topo"><b>Cargos</b><span onclick="fecharModal('modalCargos')">&times;</span></div>
+    <div class="linha-criar-cargo">
+      <input type="text" id="novoCargoNome" placeholder="Nome do cargo">
+      <input type="color" id="novoCargoCor" value="#99aab5">
+      <button class="botao-cpacord-primario" style="width:auto;padding:8px 12px;" onclick="criarCargo()">Criar</button>
+    </div>
+    <div id="listaCargosServidor"></div>
+    <div class="msg-modal-cpacord" id="msgCargos"></div>
+  </div>
+</div>
+
+<div class="modal-fundo-cpacord" id="modalVerificacao">
+  <div class="modal-caixa-cpacord">
+    <div class="modal-cpacord-topo"><b>Verificacao do servidor</b><span onclick="fecharModal('modalVerificacao')">&times;</span></div>
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:10px;">
+      <input type="checkbox" id="verificacaoAtivaCheck"> Exigir verificacao pra novos membros
+    </label>
+    <textarea id="verificacaoRegrasTexto" placeholder="Regras que a pessoa precisa concordar (ex: nao seja mal educado, siga as regras da comunidade...)" style="width:100%;min-height:90px;background:#0a0a0a;border:1px solid #ffffff22;border-radius:8px;color:#f2f2f2;padding:10px;font-family:inherit;"></textarea>
+    <button class="botao-cpacord-primario" style="margin-top:10px;" onclick="salvarConfigVerificacao()">Salvar</button>
+    <div class="msg-modal-cpacord" id="msgVerificacao"></div>
+  </div>
+</div>
+
 <script>
 const meuUsuario = "{usuario}";
 const servidorId = {servidor_id};
@@ -4563,31 +4678,203 @@ function escaparHtml(t) { const d = document.createElement("div"); d.textContent
 
 function alternarPainelMembros() { document.getElementById("painelMembrosServidor").classList.toggle("aberto"); }
 
+function fecharModal(id) { document.getElementById(id).classList.remove("aberto"); }
+
+function abrirModalVerificacao() {
+    const d = window._dadosServidorAtual || {};
+    document.getElementById("verificacaoAtivaCheck").checked = !!d.verificacao_obrigatoria;
+    document.getElementById("verificacaoRegrasTexto").value = d.regras_verificacao || "";
+    document.getElementById("modalVerificacao").classList.add("aberto");
+    document.getElementById("menuConfigServidor").classList.remove("aberto");
+}
+async function salvarConfigVerificacao() {
+    const msg = document.getElementById("msgVerificacao");
+    msg.textContent = "Salvando...";
+    const ativa = document.getElementById("verificacaoAtivaCheck").checked;
+    const regras = document.getElementById("verificacaoRegrasTexto").value.trim();
+    const r = await fetch("/cpacord/servidor/" + servidorId + "/config_verificacao", {
+        method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({ativa, regras})
+    });
+    const d = await r.json();
+    msg.textContent = d.ok ? "Salvo!" : (d.erro || "Erro.");
+    if (d.ok) carregarServidor();
+}
+
+function alternarMenuConfigServidor() {
+    document.getElementById("menuConfigServidor").classList.toggle("aberto");
+}
+document.addEventListener("click", (e) => {
+    const menu = document.getElementById("menuConfigServidor");
+    if (menu && menu.classList.contains("aberto") && !e.target.closest(".topo-servidor")) menu.classList.remove("aberto");
+});
+
+function htmlAvatarMembro(m) {
+    if (m.decoracao_tipo === "cor" && m.decoracao_cor) {
+        return `<div class="avatar-mini-decorado"><img src="${m.avatar}"><span class="decoracao-mini-cor" style="--cor-decoracao:${m.decoracao_cor}"></span></div>`;
+    } else if (m.decoracao_tipo === "imagem" && m.decoracao_imagem) {
+        return `<div class="avatar-mini-decorado"><img src="${m.avatar}"><img class="decoracao-mini" src="${m.decoracao_imagem}"></div>`;
+    }
+    return `<img src="${m.avatar}">`;
+}
+
 function renderizarMembrosServidor(membros) {
     const div = document.getElementById("listaMembrosServidor");
-    div.innerHTML = membros.map(m => {
-        let avatarHtml;
-        if (m.decoracao_tipo === "cor" && m.decoracao_cor) {
-            avatarHtml = `<div class="avatar-mini-decorado"><img src="${m.avatar}"><span class="decoracao-mini-cor" style="--cor-decoracao:${m.decoracao_cor}"></span></div>`;
-        } else if (m.decoracao_tipo === "imagem" && m.decoracao_imagem) {
-            avatarHtml = `<div class="avatar-mini-decorado"><img src="${m.avatar}"><img class="decoracao-mini" src="${m.decoracao_imagem}"></div>`;
+    // agrupa por cargo (quem tem cargo aparece no grupo do primeiro cargo, quem nao tem vai pra "Membros")
+    const grupos = {};
+    const semCargo = [];
+    membros.forEach(m => {
+        if (m.cargos && m.cargos.length > 0) {
+            const principal = m.cargos[0];
+            if (!grupos[principal.nome]) grupos[principal.nome] = { cor: principal.cor, membros: [] };
+            grupos[principal.nome].membros.push(m);
         } else {
-            avatarHtml = `<img src="${m.avatar}">`;
+            semCargo.push(m);
         }
-        return `<div class="linha-membro-servidor">${avatarHtml}<span>${escaparHtml(m.usuario)}</span></div>`;
-    }).join("");
+    });
+    let html = "";
+    Object.keys(grupos).forEach(nomeCargo => {
+        const g = grupos[nomeCargo];
+        html += `<div class="grupo-membros-cargo" style="color:${g.cor}">${escaparHtml(nomeCargo)} — ${g.membros.length}</div>`;
+        g.membros.forEach(m => {
+            const badges = (m.cargos || []).map(c => `<span class="cargo-badge" style="background:${c.cor}">${escaparHtml(c.nome)}</span>`).join("");
+            html += `<div class="linha-membro-servidor">${htmlAvatarMembro(m)}<span>${escaparHtml(m.usuario)}${badges}</span></div>`;
+        });
+    });
+    if (semCargo.length > 0) {
+        html += `<div class="grupo-membros-cargo">Membros — ${semCargo.length}</div>`;
+        semCargo.forEach(m => {
+            html += `<div class="linha-membro-servidor">${htmlAvatarMembro(m)}<span>${escaparHtml(m.usuario)}</span></div>`;
+        });
+    }
+    div.innerHTML = html;
 }
 
 async function carregarServidor() {
     const r = await fetch("/cpacord/servidor/" + servidorId + "/detalhe");
     const d = await r.json();
     if (!d.ok) { alert(d.erro || "Erro ao carregar servidor."); window.location.href = "/cpacord"; return; }
+    if (d.precisa_verificar) { mostrarPortaoVerificacao(d.nome, d.regras_verificacao); return; }
     document.getElementById("nomeServidorAtual").textContent = d.nome;
     window._souDonoServidor = d.sou_dono;
     window._codigoConvite = d.codigo_convite;
+    window._dadosServidorAtual = d;
+    document.getElementById("itemExcluirServidor").style.display = d.sou_dono ? "block" : "none";
+    document.getElementById("itemVerificacaoConfig").style.display = d.sou_dono ? "block" : "none";
     renderizarCanais(d.canais);
     renderizarMembrosServidor(d.membros);
 }
+
+function mostrarPortaoVerificacao(nomeServidor, regras) {
+    document.getElementById("areaCanal").innerHTML = `
+      <div class="portao-verificacao">
+        <div class="portao-verificacao-caixa">
+          <h3>Verificacao - ${escaparHtml(nomeServidor)}</h3>
+          <p>${escaparHtml(regras)}</p>
+          <button onclick="confirmarVerificacaoServidor()">Eu li e concordo, quero entrar</button>
+        </div>
+      </div>`;
+    document.getElementById("listaCanais").innerHTML = "";
+}
+async function confirmarVerificacaoServidor() {
+    await fetch("/cpacord/servidor/" + servidorId + "/verificar", { method: "POST" });
+    carregarServidor();
+}
+
+// ---- Perfil do servidor (nome, descricao, icone, banner, cor da faixa) ----
+const CORES_FAIXA_CPACORD = ["#5865f2","#eb459e","#ed4245","#e67e22","#f1c40f","#9b59b6","#3498db","#1abc9c","#2ecc71","#95a5a6"];
+function montarGradeCoresFaixa(corAtual) {
+    const div = document.getElementById("gradeCoresFaixa");
+    div.innerHTML = "";
+    CORES_FAIXA_CPACORD.forEach(c => {
+        const bola = document.createElement("div");
+        bola.className = "swatch-faixa" + (c === corAtual ? " selecionada" : "");
+        bola.style.background = c;
+        bola.onclick = () => { document.querySelectorAll(".swatch-faixa").forEach(s => s.classList.remove("selecionada")); bola.classList.add("selecionada"); bola.dataset.escolhida = "1"; window._corFaixaEscolhida = c; };
+        div.appendChild(bola);
+    });
+    window._corFaixaEscolhida = corAtual || CORES_FAIXA_CPACORD[0];
+}
+function abrirModalPerfilServidor() {
+    document.getElementById("menuConfigServidor").classList.remove("aberto");
+    const d = window._dadosServidorAtual || {};
+    document.getElementById("editarNomeServidor").value = d.nome || "";
+    document.getElementById("editarDescricaoServidor").value = d.descricao || "";
+    montarGradeCoresFaixa(d.cor_faixa);
+    document.getElementById("msgPerfilServidor").textContent = "";
+    document.getElementById("modalPerfilServidor").classList.add("aberto");
+}
+async function salvarPerfilServidor() {
+    const msg = document.getElementById("msgPerfilServidor");
+    msg.style.color = "#888"; msg.textContent = "Salvando...";
+    const form = new FormData();
+    form.append("nome", document.getElementById("editarNomeServidor").value.trim());
+    form.append("descricao", document.getElementById("editarDescricaoServidor").value.trim());
+    form.append("cor_faixa", window._corFaixaEscolhida || "");
+    const icone = document.getElementById("editarIconeServidor").files[0];
+    const banner = document.getElementById("editarBannerServidor").files[0];
+    if (icone) form.append("icone", icone);
+    if (banner) form.append("banner", banner);
+    const r = await fetch("/cpacord/servidor/" + servidorId + "/editar_perfil", { method: "POST", body: form });
+    const d = await r.json();
+    if (d.ok) { msg.style.color = "#3ddc6a"; msg.textContent = "Salvo!"; carregarServidor(); carregarRail(); setTimeout(() => fecharModal("modalPerfilServidor"), 700); }
+    else { msg.style.color = "#ff6666"; msg.textContent = d.erro || "Nao foi possivel salvar."; }
+}
+
+// ---- Cargos ----
+async function abrirModalCargos() {
+    document.getElementById("menuConfigServidor").classList.remove("aberto");
+    document.getElementById("modalCargos").classList.add("aberto");
+    await carregarCargos();
+}
+async function carregarCargos() {
+    const r = await fetch("/cpacord/servidor/" + servidorId + "/cargos");
+    const cargos = await r.json();
+    const div = document.getElementById("listaCargosServidor");
+    div.innerHTML = cargos.map(c => `
+        <div class="linha-cargo">
+          <span class="bolinha-cargo" style="background:${c.cor}"></span>
+          <span class="nome-cargo">${escaparHtml(c.nome)}</span>
+          <button onclick="atribuirCargoPrompt(${c.id}, '${escaparHtml(c.nome)}')">Atribuir</button>
+          <button onclick="alternarSilenciarCargo(${c.id})">${c.silenciado ? "Dessilenciar" : "Silenciar"}</button>
+          <button class="excluir-cargo" onclick="excluirCargo(${c.id})">&times;</button>
+        </div>`).join("") || "<div style='color:#777;padding:10px 0;'>Nenhum cargo criado ainda.</div>";
+}
+async function criarCargo() {
+    const nome = document.getElementById("novoCargoNome").value.trim();
+    const cor = document.getElementById("novoCargoCor").value;
+    const msg = document.getElementById("msgCargos");
+    if (!nome) { msg.style.color = "#ff6666"; msg.textContent = "Digite um nome pro cargo."; return; }
+    const r = await fetch("/cpacord/servidor/" + servidorId + "/cargos/criar", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({nome, cor}) });
+    const d = await r.json();
+    if (d.ok) { document.getElementById("novoCargoNome").value = ""; msg.style.color = "#3ddc6a"; msg.textContent = "Cargo criado!"; carregarCargos(); }
+    else { msg.style.color = "#ff6666"; msg.textContent = d.erro || "Erro."; }
+}
+async function excluirCargo(id) {
+    if (!confirm("Excluir esse cargo?")) return;
+    await fetch("/cpacord/servidor/" + servidorId + "/cargos/excluir", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({cargo_id: id}) });
+    carregarCargos(); carregarServidor();
+}
+async function alternarSilenciarCargo(id) {
+    await fetch("/cpacord/servidor/" + servidorId + "/cargos/silenciar", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({cargo_id: id}) });
+    carregarCargos();
+}
+async function atribuirCargoPrompt(cargoId, nomeCargo) {
+    const usuario = prompt("Nome de usuario pra dar o cargo \\"" + nomeCargo + "\\":");
+    if (!usuario) return;
+    const r = await fetch("/cpacord/servidor/" + servidorId + "/cargos/atribuir", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({usuario: usuario.trim(), cargo_id: cargoId}) });
+    const d = await r.json();
+    if (!d.ok) { alert(d.erro || "Nao foi possivel atribuir."); return; }
+    carregarServidor();
+}
+async function excluirServidorAtual() {
+    document.getElementById("menuConfigServidor").classList.remove("aberto");
+    if (!confirm("Tem certeza que quer excluir esse servidor? Isso apaga tudo (canais, mensagens, cargos) e nao tem como desfazer.")) return;
+    const r = await fetch("/cpacord/servidor/" + servidorId + "/excluir", { method: "POST" });
+    const d = await r.json();
+    if (d.ok) { window.location.href = "/cpacord"; }
+    else { alert(d.erro || "Nao foi possivel excluir."); }
+}
+
 function renderizarCanais(canais) {
     const div = document.getElementById("listaCanais");
     const texto = canais.filter(c => c.tipo === "texto");
@@ -4656,6 +4943,38 @@ let vozStreamLocal = null;
 let vozUltimoSinalId = 0;
 let vozPollSinais = null;
 let vozCanalAtualId = null;
+let usuariosFalando = new Set();
+let vozAnalisadores = {};
+
+function monitorarVolume(stream, usuario) {
+    try {
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        const origem = ctx.createMediaStreamSource(stream);
+        const analisador = ctx.createAnalyser();
+        analisador.fftSize = 512;
+        origem.connect(analisador);
+        const dados = new Uint8Array(analisador.frequencyBinCount);
+        const intervalo = setInterval(() => {
+            analisador.getByteFrequencyData(dados);
+            const media = dados.reduce((a, b) => a + b, 0) / dados.length;
+            const falandoAgora = media > 12;
+            if (falandoAgora && !usuariosFalando.has(usuario)) { usuariosFalando.add(usuario); atualizarClasseFalando(); }
+            else if (!falandoAgora && usuariosFalando.has(usuario)) { usuariosFalando.delete(usuario); atualizarClasseFalando(); }
+        }, 200);
+        vozAnalisadores[usuario] = { ctx, intervalo };
+    } catch (e) {}
+}
+function pararMonitorVolume(usuario) {
+    const m = vozAnalisadores[usuario];
+    if (m) { clearInterval(m.intervalo); try { m.ctx.close(); } catch(e){} delete vozAnalisadores[usuario]; }
+    usuariosFalando.delete(usuario);
+}
+function atualizarClasseFalando() {
+    document.querySelectorAll(".participante-voz").forEach(el => {
+        const nome = el.dataset.usuario;
+        el.classList.toggle("falando", usuariosFalando.has(nome));
+    });
+}
 
 async function criarConexaoVoz(outroUsuario, souIniciador, canalId) {
     const pc = new RTCPeerConnection(CONFIG_ICE);
@@ -4664,6 +4983,7 @@ async function criarConexaoVoz(outroUsuario, souIniciador, canalId) {
         let audioEl = document.getElementById("audio-voz-" + outroUsuario);
         if (!audioEl) { audioEl = document.createElement("audio"); audioEl.id = "audio-voz-" + outroUsuario; audioEl.autoplay = true; document.body.appendChild(audioEl); }
         audioEl.srcObject = ev.streams[0];
+        monitorarVolume(ev.streams[0], outroUsuario);
     };
     pc.onicecandidate = (ev) => { if (ev.candidate) enviarSinalVoz(canalId, outroUsuario, "candidato", ev.candidate); };
     vozConexoes[outroUsuario] = pc;
@@ -4700,6 +5020,7 @@ async function entrarCanalVoz(canalId) {
     try { vozStreamLocal = await navigator.mediaDevices.getUserMedia({ audio: true }); }
     catch (e) { alert("Nao foi possivel acessar o microfone."); return; }
     vozCanalAtualId = canalId;
+    monitorarVolume(vozStreamLocal, meuUsuario);
     await fetch("/cpacord/voz/entrar", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({canal_id: canalId}) });
     const r = await fetch("/cpacord/voz/participantes?canal_id=" + canalId);
     const participantes = await r.json();
@@ -4714,6 +5035,8 @@ async function sairCanalVoz() {
     if (!vozCanalAtualId) return;
     await fetch("/cpacord/voz/sair", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({canal_id: vozCanalAtualId}) });
     Object.values(vozConexoes).forEach(pc => pc.close());
+    Object.keys(vozAnalisadores).forEach(pararMonitorVolume);
+    pararMonitorVolume(meuUsuario);
     vozConexoes = {};
     if (vozStreamLocal) { vozStreamLocal.getTracks().forEach(t => t.stop()); vozStreamLocal = null; }
     document.querySelectorAll("audio[id^='audio-voz-']").forEach(a => a.remove());
@@ -4734,12 +5057,14 @@ async function atualizarParticipantesVoz() {
         for (const usuario in vozConexoes) {
             if (!participantes.find(p => p.usuario === usuario)) {
                 vozConexoes[usuario].close(); delete vozConexoes[usuario];
+                pararMonitorVolume(usuario);
                 const audioEl = document.getElementById("audio-voz-" + usuario); if (audioEl) audioEl.remove();
             }
         }
     }
     const grade = document.getElementById("gradeParticipantesVoz");
-    if (grade) grade.innerHTML = participantes.map(p => `<div class="participante-voz"><img src="${p.avatar}"><span>${escaparHtml(p.usuario)}</span></div>`).join("") || '<div style="color:#666;">Ninguem no canal ainda.</div>';
+    if (grade) grade.innerHTML = participantes.map(p => `<div class="participante-voz" data-usuario="${p.usuario}"><img src="${p.avatar}"><span>${escaparHtml(p.usuario)}</span></div>`).join("") || '<div style="color:#666;">Ninguem no canal ainda.</div>';
+    atualizarClasseFalando();
     const badge = document.getElementById("canal-voz-" + canalAtual);
     if (badge && participantes.length) { let b = badge.querySelector(".badge-participantes"); if (!b) { b = document.createElement("span"); b.className = "badge-participantes"; badge.appendChild(b); } b.textContent = participantes.length; }
 }
@@ -6994,9 +7319,10 @@ def cpacord_servidores_entrar():
     if not servidor:
         conexao.close()
         return jsonify({"ok": False, "erro": "Codigo de convite invalido."})
+    verificado_inicial = 0 if servidor["verificacao_obrigatoria"] else 1
     conexao.execute(
-        "INSERT OR IGNORE INTO cpacord_membros (servidor_id, usuario, entrou_em) VALUES (?, ?, ?)",
-        (servidor["id"], usuario, datetime.now().isoformat()),
+        "INSERT OR IGNORE INTO cpacord_membros (servidor_id, usuario, entrou_em, verificado) VALUES (?, ?, ?, ?)",
+        (servidor["id"], usuario, datetime.now().isoformat(), verificado_inicial),
     )
     conexao.commit()
     conexao.close()
@@ -7025,12 +7351,30 @@ def cpacord_servidor_detalhe(servidor_id):
     if not servidor:
         conexao.close()
         return jsonify({"ok": False, "erro": "Servidor nao encontrado."}), 404
+    membro_linha = conexao.execute(
+        "SELECT verificado FROM cpacord_membros WHERE servidor_id = ? AND usuario = ? COLLATE NOCASE", (servidor_id, usuario)
+    ).fetchone()
+    precisa_verificar = bool(servidor["verificacao_obrigatoria"]) and membro_linha and not membro_linha["verificado"]
+    if precisa_verificar:
+        conexao.close()
+        return jsonify({
+            "ok": True, "precisa_verificar": True, "nome": servidor["nome"],
+            "regras_verificacao": servidor["regras_verificacao"] or "Leia e concorde com as regras do servidor pra continuar.",
+        })
     canais = conexao.execute(
         "SELECT * FROM cpacord_canais WHERE servidor_id = ? ORDER BY tipo ASC, ordem ASC, id ASC", (servidor_id,)
     ).fetchall()
     membros = conexao.execute(
         "SELECT usuario FROM cpacord_membros WHERE servidor_id = ? ORDER BY usuario ASC", (servidor_id,)
     ).fetchall()
+    cargos_por_membro = {}
+    linhas_cargos = conexao.execute(
+        "SELECT mc.usuario, c.id, c.nome, c.cor FROM cpacord_membro_cargos mc "
+        "JOIN cpacord_cargos c ON c.id = mc.cargo_id WHERE mc.servidor_id = ? ORDER BY c.ordem ASC, c.id ASC",
+        (servidor_id,),
+    ).fetchall()
+    for l in linhas_cargos:
+        cargos_por_membro.setdefault(l["usuario"].lower(), []).append({"id": l["id"], "nome": l["nome"], "cor": l["cor"]})
     conexao.close()
     membros_info = []
     for m in membros:
@@ -7042,13 +7386,224 @@ def cpacord_servidor_detalhe(servidor_id):
             "decoracao_tipo": dec["tipo"] if dec else None,
             "decoracao_imagem": dec["imagem_url"] if dec else None,
             "decoracao_cor": dec["cor"] if dec else None,
+            "cargos": cargos_por_membro.get(m["usuario"].lower(), []),
         })
     return jsonify({
-        "ok": True, "nome": servidor["nome"], "icone": servidor["icone"],
+        "ok": True, "nome": servidor["nome"], "icone": servidor["icone"], "banner": servidor["banner"],
+        "descricao": servidor["descricao"], "cor_faixa": servidor["cor_faixa"],
         "codigo_convite": servidor["codigo_convite"], "sou_dono": servidor["dono"].lower() == usuario.lower(),
+        "verificacao_obrigatoria": bool(servidor["verificacao_obrigatoria"]), "regras_verificacao": servidor["regras_verificacao"],
         "canais": [{"id": c["id"], "nome": c["nome"], "tipo": c["tipo"]} for c in canais],
         "membros": membros_info,
     })
+
+
+@app.route("/cpacord/servidor/<int:servidor_id>/editar_perfil", methods=["POST"])
+def cpacord_servidor_editar_perfil(servidor_id):
+    if not session.get("usuario"):
+        return jsonify({"ok": False}), 401
+    usuario = session["usuario"]
+    if not (_dono_do_servidor(servidor_id, usuario) or eh_desenvolvedor(usuario)):
+        return jsonify({"ok": False, "erro": "So o dono do servidor pode editar."}), 403
+    nome = request.form.get("nome", "").strip()
+    descricao = request.form.get("descricao", "").strip()
+    cor_faixa = request.form.get("cor_faixa", "").strip()
+    conexao = obter_bd()
+    campos, valores = [], []
+    if nome:
+        campos.append("nome = ?")
+        valores.append(nome)
+    campos.append("descricao = ?")
+    valores.append(descricao or None)
+    if cor_faixa:
+        campos.append("cor_faixa = ?")
+        valores.append(cor_faixa)
+    icone_arquivo = request.files.get("icone")
+    if icone_arquivo and icone_arquivo.filename:
+        url_icone = salvar_imagem(icone_arquivo)
+        if url_icone:
+            campos.append("icone = ?")
+            valores.append(url_icone)
+    banner_arquivo = request.files.get("banner")
+    if banner_arquivo and banner_arquivo.filename:
+        url_banner = salvar_imagem(banner_arquivo)
+        if url_banner:
+            campos.append("banner = ?")
+            valores.append(url_banner)
+    valores.append(servidor_id)
+    conexao.execute(f"UPDATE cpacord_servidores SET {', '.join(campos)} WHERE id = ?", valores)
+    conexao.commit()
+    conexao.close()
+    return jsonify({"ok": True})
+
+
+@app.route("/cpacord/servidor/<int:servidor_id>/excluir", methods=["POST"])
+def cpacord_servidor_excluir(servidor_id):
+    if not session.get("usuario"):
+        return jsonify({"ok": False}), 401
+    usuario = session["usuario"]
+    if not (_dono_do_servidor(servidor_id, usuario) or eh_desenvolvedor(usuario)):
+        return jsonify({"ok": False, "erro": "So o dono do servidor pode excluir."}), 403
+    conexao = obter_bd()
+    ids_canais = [r["id"] for r in conexao.execute("SELECT id FROM cpacord_canais WHERE servidor_id = ?", (servidor_id,)).fetchall()]
+    for canal_id in ids_canais:
+        conexao.execute("DELETE FROM cpacord_mensagens WHERE canal_id = ?", (canal_id,))
+        conexao.execute("DELETE FROM cpacord_presenca_voz WHERE canal_id = ?", (canal_id,))
+    conexao.execute("DELETE FROM cpacord_canais WHERE servidor_id = ?", (servidor_id,))
+    conexao.execute("DELETE FROM cpacord_membros WHERE servidor_id = ?", (servidor_id,))
+    conexao.execute("DELETE FROM cpacord_membro_cargos WHERE servidor_id = ?", (servidor_id,))
+    conexao.execute("DELETE FROM cpacord_cargos WHERE servidor_id = ?", (servidor_id,))
+    conexao.execute("DELETE FROM cpacord_servidores WHERE id = ?", (servidor_id,))
+    conexao.commit()
+    conexao.close()
+    return jsonify({"ok": True})
+
+
+# ---- Cargos (roles) ----
+@app.route("/cpacord/servidor/<int:servidor_id>/verificar", methods=["POST"])
+def cpacord_servidor_verificar(servidor_id):
+    """A propria pessoa confirma que leu as regras e libera o acesso aos canais."""
+    if not session.get("usuario"):
+        return jsonify({"ok": False}), 401
+    usuario = session["usuario"]
+    if not _membro_do_servidor(servidor_id, usuario):
+        return jsonify({"ok": False}), 403
+    conexao = obter_bd()
+    conexao.execute(
+        "UPDATE cpacord_membros SET verificado = 1 WHERE servidor_id = ? AND usuario = ? COLLATE NOCASE",
+        (servidor_id, usuario),
+    )
+    conexao.commit()
+    conexao.close()
+    return jsonify({"ok": True})
+
+
+@app.route("/cpacord/servidor/<int:servidor_id>/config_verificacao", methods=["POST"])
+def cpacord_servidor_config_verificacao(servidor_id):
+    """O dono do servidor liga/desliga a verificacao obrigatoria e define as regras."""
+    if not session.get("usuario"):
+        return jsonify({"ok": False}), 401
+    usuario = session["usuario"]
+    conexao = obter_bd()
+    servidor = conexao.execute("SELECT dono FROM cpacord_servidores WHERE id = ?", (servidor_id,)).fetchone()
+    if not servidor or servidor["dono"].lower() != usuario.lower():
+        conexao.close()
+        return jsonify({"ok": False, "erro": "Sem permissao."}), 403
+    dados = request.get_json() or {}
+    ativa = 1 if dados.get("ativa") else 0
+    regras = (dados.get("regras") or "").strip() or None
+    conexao.execute(
+        "UPDATE cpacord_servidores SET verificacao_obrigatoria = ?, regras_verificacao = ? WHERE id = ?",
+        (ativa, regras, servidor_id),
+    )
+    conexao.commit()
+    conexao.close()
+    return jsonify({"ok": True})
+
+
+@app.route("/cpacord/servidor/<int:servidor_id>/cargos")
+def cpacord_cargos_listar(servidor_id):
+    if not session.get("usuario"):
+        return jsonify([]), 401
+    if not _membro_do_servidor(servidor_id, session["usuario"]):
+        return jsonify([]), 403
+    conexao = obter_bd()
+    cargos = conexao.execute(
+        "SELECT * FROM cpacord_cargos WHERE servidor_id = ? ORDER BY ordem ASC, id ASC", (servidor_id,)
+    ).fetchall()
+    conexao.close()
+    return jsonify([{"id": c["id"], "nome": c["nome"], "cor": c["cor"], "silenciado": bool(c["silenciado"])} for c in cargos])
+
+
+@app.route("/cpacord/servidor/<int:servidor_id>/cargos/criar", methods=["POST"])
+def cpacord_cargos_criar(servidor_id):
+    if not session.get("usuario"):
+        return jsonify({"ok": False}), 401
+    usuario = session["usuario"]
+    if not (_dono_do_servidor(servidor_id, usuario) or eh_desenvolvedor(usuario)):
+        return jsonify({"ok": False, "erro": "So o dono do servidor pode criar cargos."}), 403
+    dados = request.get_json() or {}
+    nome = (dados.get("nome") or "").strip()
+    cor = (dados.get("cor") or "#99aab5").strip()
+    if not nome:
+        return jsonify({"ok": False, "erro": "Digite um nome pro cargo."})
+    conexao = obter_bd()
+    conexao.execute(
+        "INSERT INTO cpacord_cargos (servidor_id, nome, cor, criado_em) VALUES (?, ?, ?, ?)",
+        (servidor_id, nome, cor, datetime.now().isoformat()),
+    )
+    conexao.commit()
+    conexao.close()
+    return jsonify({"ok": True})
+
+
+@app.route("/cpacord/servidor/<int:servidor_id>/cargos/excluir", methods=["POST"])
+def cpacord_cargos_excluir(servidor_id):
+    if not session.get("usuario"):
+        return jsonify({"ok": False}), 401
+    usuario = session["usuario"]
+    if not (_dono_do_servidor(servidor_id, usuario) or eh_desenvolvedor(usuario)):
+        return jsonify({"ok": False, "erro": "Sem permissao."}), 403
+    dados = request.get_json() or {}
+    try:
+        cargo_id = int(dados.get("cargo_id"))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False}), 400
+    conexao = obter_bd()
+    conexao.execute("DELETE FROM cpacord_membro_cargos WHERE cargo_id = ? AND servidor_id = ?", (cargo_id, servidor_id))
+    conexao.execute("DELETE FROM cpacord_cargos WHERE id = ? AND servidor_id = ?", (cargo_id, servidor_id))
+    conexao.commit()
+    conexao.close()
+    return jsonify({"ok": True})
+
+
+@app.route("/cpacord/servidor/<int:servidor_id>/cargos/silenciar", methods=["POST"])
+def cpacord_cargos_silenciar(servidor_id):
+    if not session.get("usuario"):
+        return jsonify({"ok": False}), 401
+    usuario = session["usuario"]
+    if not (_dono_do_servidor(servidor_id, usuario) or eh_desenvolvedor(usuario)):
+        return jsonify({"ok": False, "erro": "Sem permissao."}), 403
+    dados = request.get_json() or {}
+    try:
+        cargo_id = int(dados.get("cargo_id"))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False}), 400
+    conexao = obter_bd()
+    linha = conexao.execute("SELECT silenciado FROM cpacord_cargos WHERE id = ? AND servidor_id = ?", (cargo_id, servidor_id)).fetchone()
+    if not linha:
+        conexao.close()
+        return jsonify({"ok": False, "erro": "Cargo nao encontrado."})
+    novo_estado = 0 if linha["silenciado"] else 1
+    conexao.execute("UPDATE cpacord_cargos SET silenciado = ? WHERE id = ?", (novo_estado, cargo_id))
+    conexao.commit()
+    conexao.close()
+    return jsonify({"ok": True, "silenciado": bool(novo_estado)})
+
+
+@app.route("/cpacord/servidor/<int:servidor_id>/cargos/atribuir", methods=["POST"])
+def cpacord_cargos_atribuir(servidor_id):
+    if not session.get("usuario"):
+        return jsonify({"ok": False}), 401
+    usuario = session["usuario"]
+    if not (_dono_do_servidor(servidor_id, usuario) or eh_desenvolvedor(usuario)):
+        return jsonify({"ok": False, "erro": "So o dono do servidor pode atribuir cargos."}), 403
+    dados = request.get_json() or {}
+    alvo = (dados.get("usuario") or "").strip()
+    try:
+        cargo_id = int(dados.get("cargo_id"))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False}), 400
+    if not _membro_do_servidor(servidor_id, alvo):
+        return jsonify({"ok": False, "erro": "Essa pessoa nao faz parte do servidor."})
+    conexao = obter_bd()
+    conexao.execute(
+        "INSERT OR IGNORE INTO cpacord_membro_cargos (servidor_id, usuario, cargo_id) VALUES (?, ?, ?)",
+        (servidor_id, alvo, cargo_id),
+    )
+    conexao.commit()
+    conexao.close()
+    return jsonify({"ok": True})
 
 
 @app.route("/cpacord/servidor/<int:servidor_id>/criar_canal", methods=["POST"])
