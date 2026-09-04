@@ -474,6 +474,28 @@ def gerar_id_publico(conexao):
 iniciar_bd()
 
 
+def iniciar_bd_newgg():
+    c = obter_bd()
+    c.execute("""CREATE TABLE IF NOT EXISTS ng_servidores (id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT NOT NULL, icone TEXT, criado_por TEXT NOT NULL, verificado INTEGER DEFAULT 0, criado_em TEXT NOT NULL)""")
+    c.execute("""CREATE TABLE IF NOT EXISTS ng_canais (id INTEGER PRIMARY KEY AUTOINCREMENT, servidor_id INTEGER NOT NULL, nome TEXT NOT NULL, tipo TEXT NOT NULL DEFAULT 'texto', posicao INTEGER DEFAULT 0, criado_em TEXT NOT NULL)""")
+    c.execute("""CREATE TABLE IF NOT EXISTS ng_membros (servidor_id INTEGER NOT NULL, usuario TEXT NOT NULL, cargo TEXT DEFAULT 'membro', criado_em TEXT NOT NULL, PRIMARY KEY (servidor_id, usuario))""")
+    c.execute("""CREATE TABLE IF NOT EXISTS ng_mensagens (id INTEGER PRIMARY KEY AUTOINCREMENT, canal_id INTEGER, conversa TEXT, remetente TEXT NOT NULL, destinatario TEXT, conteudo TEXT NOT NULL, imagem TEXT, criado_em TEXT NOT NULL, criptografado INTEGER DEFAULT 1)""")
+    c.execute("""CREATE TABLE IF NOT EXISTS ng_notificacoes (id INTEGER PRIMARY KEY AUTOINCREMENT, usuario TEXT NOT NULL, tipo TEXT NOT NULL, titulo TEXT NOT NULL, texto TEXT NOT NULL, link TEXT, lida INTEGER DEFAULT 0, criado_em TEXT NOT NULL)""")
+    c.execute("""CREATE TABLE IF NOT EXISTS ng_ia_config (chave TEXT PRIMARY KEY, valor TEXT)""")
+    agora = datetime.now().isoformat()
+    dono = CONTA_DESENVOLVEDOR
+    linha = c.execute("SELECT id FROM ng_servidores WHERE nome='New GG Oficial' ORDER BY id LIMIT 1").fetchone()
+    if not linha:
+        cur=c.execute("INSERT INTO ng_servidores (nome,icone,criado_por,verificado,criado_em) VALUES (?,?,?,?,?)",('New GG Oficial','/static/logo.jpg',dono,1,agora))
+        sid=cur.lastrowid
+        c.execute("INSERT INTO ng_canais (servidor_id,nome,tipo,posicao,criado_em) VALUES (?,?,?,?,?)",(sid,'geral','texto',0,agora))
+        c.execute("INSERT INTO ng_canais (servidor_id,nome,tipo,posicao,criado_em) VALUES (?,?,?,?,?)",(sid,'suporte','texto',1,agora))
+    c.execute("INSERT OR REPLACE INTO ng_ia_config (chave,valor) VALUES ('bot_usuario','New GG')")
+    c.execute("INSERT OR REPLACE INTO ng_ia_config (chave,valor) VALUES ('bot_tag','OFICIAL')")
+    c.commit(); c.close()
+
+iniciar_bd_newgg()
+
 def buscar_usuario(nome):
     conexao = obter_bd()
     linha = conexao.execute("SELECT * FROM usuarios WHERE usuario = ? COLLATE NOCASE", (nome,)).fetchone()
@@ -6148,8 +6170,8 @@ def favicon():
 def manifest_json():
     icone = obter_config("icone_app", "/static/logo.jpg")
     manifest = {
-        "name": "CHAT CPA",
-        "short_name": "CHAT CPA",
+        "name": "New GG",
+        "short_name": "New GG",
         "start_url": "/inicio",
         "scope": "/",
         "display": "standalone",
@@ -7004,9 +7026,7 @@ def new_gg_ai():
     linha = buscar_usuario(usuario)
     if linha and linha["bloqueado"]:
         return PAGINA_BLOQUEADO
-    rail_admin = '<div class="rail-item" onclick="window.location.href=\'/rede\'" title="Painel do dono" style="color:#f5c944;">&#9881;</div>' if eh_desenvolvedor(usuario) else ""
-    pagina = PAGINA_NEWGGAI.replace("{usuario}", usuario).replace("{rail_admin}", rail_admin)
-    return pagina
+    return PAGINA_NEWGG_DISCORD.replace("{usuario}", usuario)
 
 
 @app.route("/zap")
@@ -7867,6 +7887,185 @@ def extensao_chat():
         max_tokens=1200,
     )
     return jsonify({"resposta": resposta.choices[0].message.content})
+
+
+
+# ================= NEW GG DISCORD BACKEND =================
+NEWGG_OWNER_NICK = "samuca12349116"
+NEWGG_BOT = "New GG"
+
+def ng_eh_admin(usuario):
+    return eh_desenvolvedor(usuario) or (usuario or '').lower() == NEWGG_OWNER_NICK.lower()
+
+def ng_chave():
+    """Chave Fernet do New GG. Em producao, prefira definir NEWGG_ENCRYPTION_KEY no Render."""
+    if Fernet is None:
+        return None
+    raw=os.environ.get('NEWGG_ENCRYPTION_KEY','').strip()
+    if raw:
+        try: return Fernet(raw.encode())
+        except Exception: pass
+    import hashlib
+    digest=hashlib.sha256((os.environ.get('FLASK_SECRET','troque_essa_chave_em_producao')+'|NEWGG').encode()).digest()
+    return Fernet(base64.urlsafe_b64encode(digest))
+
+def ng_cifrar(texto):
+    f=ng_chave()
+    if not f: return texto
+    return f.encrypt((texto or '').encode()).decode()
+
+def ng_decifrar(texto):
+    f=ng_chave()
+    if not f: return texto
+    try: return f.decrypt((texto or '').encode()).decode()
+    except Exception: return '[mensagem protegida]'
+
+def ng_notificar(usuario,tipo,titulo,texto,link=None):
+    c=obter_bd(); c.execute('INSERT INTO ng_notificacoes (usuario,tipo,titulo,texto,link,criado_em) VALUES (?,?,?,?,?,?)',
+        (usuario,tipo,titulo,texto,link,datetime.now().isoformat())); c.commit(); c.close()
+
+def ng_e_membro(c,sid,u):
+    if ng_eh_admin(u): return True
+    return c.execute('SELECT 1 FROM ng_membros WHERE servidor_id=? AND usuario=? COLLATE NOCASE',(sid,u)).fetchone() is not None
+
+def ng_add_membro(c,sid,u,cargo='membro'):
+    c.execute('INSERT OR IGNORE INTO ng_membros (servidor_id,usuario,cargo,criado_em) VALUES (?,?,?,?)',(sid,u,cargo,datetime.now().isoformat()))
+
+def ng_servidores_para(u):
+    c=obter_bd()
+    if ng_eh_admin(u):
+        rows=c.execute('SELECT * FROM ng_servidores ORDER BY id').fetchall()
+    else:
+        rows=c.execute('SELECT s.* FROM ng_servidores s JOIN ng_membros m ON m.servidor_id=s.id WHERE m.usuario=? COLLATE NOCASE ORDER BY s.id',(u,)).fetchall()
+    out=[]
+    for srow in rows:
+        chans=c.execute('SELECT id,nome,tipo FROM ng_canais WHERE servidor_id=? ORDER BY posicao,id',(srow['id'],)).fetchall()
+        out.append({'id':srow['id'],'nome':srow['nome'],'icone':srow['icone'],'verificado':bool(srow['verificado']),'dono':srow['criado_por'],'admin':ng_eh_admin(u) or srow['criado_por'].lower()==u.lower(),'canais':[dict(x) for x in chans]})
+    c.close(); return out
+
+@app.route('/api/ng/servidores')
+def ng_api_servidores():
+    if not session.get('usuario'): return jsonify([]),401
+    return jsonify(ng_servidores_para(session['usuario']))
+
+@app.route('/api/ng/servidor/criar',methods=['POST'])
+def ng_api_servidor_criar():
+    if not session.get('usuario'): return jsonify({'ok':False}),401
+    u=session['usuario']; d=request.get_json() or {}; nome=(d.get('nome') or '').strip()[:60]
+    if not nome: return jsonify({'ok':False,'erro':'Digite um nome para o servidor.'})
+    c=obter_bd(); cur=c.execute('INSERT INTO ng_servidores (nome,icone,criado_por,verificado,criado_em) VALUES (?,?,?,?,?)',(nome,d.get('icone') or '/static/logo.jpg',u,1 if ng_eh_admin(u) else 0,datetime.now().isoformat())); sid=cur.lastrowid
+    ng_add_membro(c,sid,u,'dono'); c.execute('INSERT INTO ng_canais (servidor_id,nome,tipo,posicao,criado_em) VALUES (?,?,?,?,?)',(sid,'geral','texto',0,datetime.now().isoformat())); c.commit(); c.close()
+    return jsonify({'ok':True,'id':sid})
+
+@app.route('/api/ng/servidor/<int:sid>/entrar',methods=['POST'])
+def ng_api_entrar_servidor(sid):
+    if not session.get('usuario'): return jsonify({'ok':False}),401
+    u=session['usuario']; c=obter_bd(); srow=c.execute('SELECT * FROM ng_servidores WHERE id=?',(sid,)).fetchone()
+    if not srow: c.close(); return jsonify({'ok':False,'erro':'Servidor nao encontrado.'})
+    ng_add_membro(c,sid,u); c.commit(); c.close(); return jsonify({'ok':True})
+
+@app.route('/api/ng/servidor/<int:sid>/canal',methods=['POST'])
+def ng_api_canal_criar(sid):
+    if not session.get('usuario'): return jsonify({'ok':False}),401
+    u=session['usuario']; d=request.get_json() or {}; nome=(d.get('nome') or '').strip()[:50]; tipo=d.get('tipo','texto')
+    c=obter_bd(); srow=c.execute('SELECT * FROM ng_servidores WHERE id=?',(sid,)).fetchone()
+    if not srow or not ng_eh_admin(u) and srow['criado_por'].lower()!=u.lower(): c.close(); return jsonify({'ok':False,'erro':'Sem permissao.'}),403
+    if not nome: c.close(); return jsonify({'ok':False,'erro':'Nome obrigatorio.'})
+    pos=c.execute('SELECT COALESCE(MAX(posicao),-1)+1 p FROM ng_canais WHERE servidor_id=?',(sid,)).fetchone()['p']
+    cur=c.execute('INSERT INTO ng_canais (servidor_id,nome,tipo,posicao,criado_em) VALUES (?,?,?,?,?)',(sid,nome,'texto',pos,datetime.now().isoformat())); c.commit(); cid=cur.lastrowid; c.close(); return jsonify({'ok':True,'id':cid})
+
+@app.route('/api/ng/canal/<int:cid>/mensagens')
+def ng_api_canal_mensagens(cid):
+    if not session.get('usuario'): return jsonify([]),401
+    u=session['usuario']; c=obter_bd(); ch=c.execute('SELECT * FROM ng_canais WHERE id=?',(cid,)).fetchone()
+    if not ch or not ng_e_membro(c,ch['servidor_id'],u): c.close(); return jsonify([]),403
+    rows=c.execute('SELECT * FROM ng_mensagens WHERE canal_id=? ORDER BY id DESC LIMIT 150',(cid,)).fetchall(); out=[]
+    for r in reversed(rows): out.append({'id':r['id'],'remetente':r['remetente'],'conteudo':ng_decifrar(r['conteudo']) if r['criptografado'] else r['conteudo'],'imagem':r['imagem'],'criado_em':r['criado_em'],'oficial':r['remetente'].lower()==NEWGG_BOT.lower()})
+    c.close(); return jsonify(out)
+
+@app.route('/api/ng/canal/<int:cid>/enviar',methods=['POST'])
+def ng_api_canal_enviar(cid):
+    if not session.get('usuario'): return jsonify({'ok':False}),401
+    u=session['usuario']; d=request.get_json() or {}; texto=(d.get('texto') or '').strip(); imagem=d.get('imagem') or None
+    if not texto and not imagem: return jsonify({'ok':False,'erro':'Mensagem vazia.'})
+    c=obter_bd(); ch=c.execute('SELECT * FROM ng_canais WHERE id=?',(cid,)).fetchone()
+    if not ch or not ng_e_membro(c,ch['servidor_id'],u): c.close(); return jsonify({'ok':False,'erro':'Sem acesso.'}),403
+    agora=datetime.now().isoformat(); c.execute('INSERT INTO ng_mensagens (canal_id,remetente,conteudo,imagem,criado_em,criptografado) VALUES (?,?,?,?,?,1)',(cid,u,ng_cifrar(texto),imagem,agora)); c.commit(); c.close()
+    return jsonify({'ok':True})
+
+@app.route('/api/ng/dm/<contato>/mensagens')
+def ng_api_dm_mensagens(contato):
+    if not session.get('usuario'): return jsonify([]),401
+    u=session['usuario']; alvo=buscar_usuario(contato)
+    if not alvo: return jsonify([])
+    conv='|'.join(sorted([u.lower(),alvo['usuario'].lower()]))
+    c=obter_bd(); rows=c.execute("SELECT * FROM ng_mensagens WHERE conversa=? ORDER BY id DESC LIMIT 150",(conv,)).fetchall(); out=[]
+    for r in reversed(rows): out.append({'id':r['id'],'remetente':r['remetente'],'conteudo':ng_decifrar(r['conteudo']) if r['criptografado'] else r['conteudo'],'imagem':r['imagem'],'criado_em':r['criado_em'],'oficial':r['remetente'].lower()==NEWGG_BOT.lower()})
+    c.close(); return jsonify(out)
+
+@app.route('/api/ng/dm/<contato>/enviar',methods=['POST'])
+def ng_api_dm_enviar(contato):
+    if not session.get('usuario'): return jsonify({'ok':False}),401
+    u=session['usuario']; alvo=buscar_usuario(contato); d=request.get_json() or {}; texto=(d.get('texto') or '').strip(); imagem=d.get('imagem') or None
+    if not alvo: return jsonify({'ok':False,'erro':'Usuario nao encontrado.'})
+    if not texto and not imagem: return jsonify({'ok':False,'erro':'Mensagem vazia.'})
+    conv='|'.join(sorted([u.lower(),alvo['usuario'].lower()])); c=obter_bd(); c.execute('INSERT INTO ng_mensagens (conversa,remetente,destinatario,conteudo,imagem,criado_em,criptografado) VALUES (?,?,?,?,?,?,1)',(conv,u,alvo['usuario'],ng_cifrar(texto),imagem,datetime.now().isoformat())); c.commit(); c.close()
+    ng_notificar(alvo['usuario'],'mensagem','Nova mensagem',f'{u} enviou uma mensagem.')
+    return jsonify({'ok':True})
+
+@app.route('/api/ng/dm/ia/mensagens')
+def ng_api_ia_mensagens():
+    if not session.get('usuario'): return jsonify([]),401
+    u=session['usuario']; conv='ia|'+u.lower(); c=obter_bd(); rows=c.execute("SELECT * FROM ng_mensagens WHERE conversa=? ORDER BY id DESC LIMIT 150",(conv,)).fetchall(); out=[]
+    for r in reversed(rows): out.append({'id':r['id'],'remetente':r['remetente'],'conteudo':ng_decifrar(r['conteudo']) if r['criptografado'] else r['conteudo'],'imagem':r['imagem'],'criado_em':r['criado_em'],'oficial':r['remetente'].lower()==NEWGG_BOT.lower()})
+    c.close(); return jsonify(out)
+
+@app.route('/api/ng/ia/enviar',methods=['POST'])
+def ng_api_ia_enviar():
+    if not session.get('usuario'): return jsonify({'ok':False}),401
+    u=session['usuario']; d=request.get_json() or {}; texto=(d.get('texto') or '').strip()
+    if not texto: return jsonify({'ok':False,'erro':'Digite uma mensagem.'})
+    conv='ia|'+u.lower(); c=obter_bd(); c.execute('INSERT INTO ng_mensagens (conversa,remetente,destinatario,conteudo,criado_em,criptografado) VALUES (?,?,?,?,?,1)',(conv,u,NEWGG_BOT,ng_cifrar(texto),datetime.now().isoformat())); c.commit()
+    rows=c.execute("SELECT remetente,conteudo,criptografado FROM ng_mensagens WHERE conversa=? ORDER BY id DESC LIMIT 20",(conv,)).fetchall(); c.close()
+    historico=[{'role':'assistant' if r['remetente']==NEWGG_BOT else 'user','content':ng_decifrar(r['conteudo']) if r['criptografado'] else r['conteudo']} for r in reversed(rows)]
+    sistema={'role':'system','content':('Voce e New GG, uma IA oficial, clara e objetiva. Responda em portugues. Nao invente fatos. Se nao tiver informacao suficiente ou nao conseguir responder com seguranca, comece sua resposta exatamente com [ENCAMINHAR].')}
+    try: resposta=gerar_resposta_ia([sistema]+historico)
+    except Exception: resposta='[ENCAMINHAR] Nao consegui responder agora. Vou encaminhar sua pergunta para a equipe.'
+    encaminhar=resposta.strip().startswith('[ENCAMINHAR]')
+    if encaminhar: resposta=re.sub(r'^\\[ENCAMINHAR\\]\\s*','',resposta.strip()) or 'Nao consegui responder agora. Vou encaminhar sua pergunta para a equipe.'
+    c=obter_bd(); c.execute('INSERT INTO ng_mensagens (conversa,remetente,destinatario,conteudo,criado_em,criptografado) VALUES (?,?,?,?,?,1)',(conv,NEWGG_BOT,u,ng_cifrar(resposta),datetime.now().isoformat())); c.commit(); c.close()
+    if encaminhar:
+        ng_notificar(NEWGG_OWNER_NICK,'ia','A New GG precisa de ajuda',f'Usuario {u}: {texto}')
+        try:
+            dono=buscar_usuario(NEWGG_OWNER_NICK)
+            if dono and dono['usuario'].lower()!=u.lower(): ng_notificar(dono['usuario'],'ia','A New GG precisa de ajuda',f'Usuario {u}: {texto}')
+        except Exception: pass
+    return jsonify({'ok':True,'resposta':resposta,'encaminhar':encaminhar})
+
+@app.route('/api/ng/notificacoes')
+def ng_api_notificacoes():
+    if not session.get('usuario'): return jsonify([]),401
+    c=obter_bd(); rows=c.execute('SELECT * FROM ng_notificacoes WHERE usuario=? COLLATE NOCASE ORDER BY id DESC LIMIT 50',(session['usuario'],)).fetchall(); c.close()
+    return jsonify([dict(r) for r in rows])
+
+@app.route('/api/ng/notificacoes/<int:nid>/ler',methods=['POST'])
+def ng_api_notificacao_ler(nid):
+    if not session.get('usuario'): return jsonify({'ok':False}),401
+    c=obter_bd(); c.execute('UPDATE ng_notificacoes SET lida=1 WHERE id=? AND usuario=? COLLATE NOCASE',(nid,session['usuario'])); c.commit(); c.close(); return jsonify({'ok':True})
+
+@app.route('/api/ng/upload',methods=['POST'])
+def ng_api_upload():
+    if not session.get('usuario'): return jsonify({'ok':False}),401
+    arq=request.files.get('arquivo')
+    if not arq: return jsonify({'ok':False,'erro':'Arquivo ausente.'})
+    try: url=salvar_arquivo_enviado(arq)
+    except Exception as e: return jsonify({'ok':False,'erro':str(e)})
+    return jsonify({'ok':True,'url':url})
+
+
+if __name__ == "__main__":
+    porta = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=porta)
 
 
 if __name__ == "__main__":
