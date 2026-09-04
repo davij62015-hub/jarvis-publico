@@ -19,6 +19,7 @@ import ssl
 import threading
 import queue
 import time
+import re
 from email.mime.text import MIMEText
 from datetime import datetime, timedelta
 from flask import Flask, request, jsonify, session, redirect, url_for, send_file
@@ -482,33 +483,6 @@ def iniciar_bd_newgg():
     c.execute("""CREATE TABLE IF NOT EXISTS ng_mensagens (id INTEGER PRIMARY KEY AUTOINCREMENT, canal_id INTEGER, conversa TEXT, remetente TEXT NOT NULL, destinatario TEXT, conteudo TEXT NOT NULL, imagem TEXT, criado_em TEXT NOT NULL, criptografado INTEGER DEFAULT 1)""")
     c.execute("""CREATE TABLE IF NOT EXISTS ng_notificacoes (id INTEGER PRIMARY KEY AUTOINCREMENT, usuario TEXT NOT NULL, tipo TEXT NOT NULL, titulo TEXT NOT NULL, texto TEXT NOT NULL, link TEXT, lida INTEGER DEFAULT 0, criado_em TEXT NOT NULL)""")
     c.execute("""CREATE TABLE IF NOT EXISTS ng_ia_config (chave TEXT PRIMARY KEY, valor TEXT)""")
-    c.execute("""CREATE TABLE IF NOT EXISTS ng_amizades (
-        id INTEGER PRIMARY KEY AUTOINCREMENT, de_usuario TEXT NOT NULL, para_usuario TEXT NOT NULL,
-        status TEXT NOT NULL DEFAULT 'pendente', criado_em TEXT NOT NULL, UNIQUE(de_usuario, para_usuario)
-    )""")
-    c.execute("""CREATE TABLE IF NOT EXISTS ng_cargos (
-        id INTEGER PRIMARY KEY AUTOINCREMENT, servidor_id INTEGER NOT NULL, nome TEXT NOT NULL,
-        cor TEXT DEFAULT '#5865f2', posicao INTEGER DEFAULT 0, administrador INTEGER DEFAULT 0,
-        ver_canais INTEGER DEFAULT 1, enviar_mensagens INTEGER DEFAULT 1, anexar_arquivos INTEGER DEFAULT 1,
-        gerenciar_canais INTEGER DEFAULT 0, gerenciar_cargos INTEGER DEFAULT 0, gerenciar_membros INTEGER DEFAULT 0,
-        criado_em TEXT NOT NULL
-    )""")
-    c.execute("""CREATE TABLE IF NOT EXISTS ng_perfil (
-        usuario TEXT PRIMARY KEY, bio TEXT DEFAULT '', avatar TEXT, status TEXT DEFAULT 'Online',
-        nitro INTEGER DEFAULT 0, atualizado_em TEXT
-    )""")
-    c.execute("""CREATE TABLE IF NOT EXISTS ng_nitro (
-        usuario TEXT PRIMARY KEY, ativo INTEGER DEFAULT 0, concedido_por TEXT,
-        plano TEXT DEFAULT 'New GG Nitro', criado_em TEXT
-    )""")
-    for sql in [
-        "ALTER TABLE ng_mensagens ADD COLUMN tipo TEXT DEFAULT 'texto'",
-        "ALTER TABLE ng_mensagens ADD COLUMN nome_arquivo TEXT",
-        "ALTER TABLE ng_mensagens ADD COLUMN tamanho INTEGER DEFAULT 0",
-    ]:
-        try: c.execute(sql)
-        except Exception: pass
-
     agora = datetime.now().isoformat()
     dono = CONTA_DESENVOLVEDOR
     linha = c.execute("SELECT id FROM ng_servidores WHERE nome='New GG Oficial' ORDER BY id LIMIT 1").fetchone()
@@ -7047,19 +7021,17 @@ def suporte_responder():
 PAGINA_NEWGG_DISCORD = r'''<!doctype html>
 <html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>New GG</title>
 <style>
-*{box-sizing:border-box}html,body{margin:0;height:100%;font-family:Inter,Arial,sans-serif;background:#0b0d10;color:#fff;overflow:hidden}button,input{font:inherit}button{cursor:pointer;border:0}.app{height:100vh;display:flex}.rail{width:72px;background:#08090b;padding:12px 10px;display:flex;flex-direction:column;align-items:center;gap:9px;border-right:1px solid #ffffff0d}.srv{width:50px;height:50px;border-radius:16px;background:#191c22;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:17px;overflow:hidden;position:relative;transition:.15s}.srv:hover,.srv.active{background:#5865f2;border-radius:14px}.srv img{width:100%;height:100%;object-fit:cover}.plus{color:#66e3a0;font-size:26px}.dot{width:9px;height:9px;background:#52d273;border:2px solid #08090b;border-radius:50%;position:absolute;right:1px;bottom:1px}.sep{height:1px;width:34px;background:#fff1}.side{width:270px;background:#121419;border-right:1px solid #ffffff0d;display:flex;flex-direction:column}.top{height:58px;padding:11px 12px;border-bottom:1px solid #fff1;display:flex;align-items:center;font-weight:800}.search{margin:10px 12px;background:#08090b;border:1px solid #fff1;border-radius:8px;padding:10px;color:#fff;outline:0}.section{padding:8px 12px;color:#858993;font-size:11px;font-weight:800;text-transform:uppercase;display:flex;justify-content:space-between}.item{margin:2px 8px;padding:9px 10px;border-radius:7px;color:#b8bbc4;display:flex;gap:9px;align-items:center}.item:hover,.item.active{background:#242832;color:#fff}.ico{width:20px;text-align:center}.me{margin-top:auto;padding:10px;background:#0d0f13;display:flex;align-items:center;gap:9px}.avatar{width:34px;height:34px;border-radius:50%;background:#f5c400;color:#1c1700;display:flex;align-items:center;justify-content:center;font-weight:800;overflow:hidden}.avatar img{width:100%;height:100%;object-fit:cover}.verified{font-size:9px;background:#5865f2;padding:3px 5px;border-radius:5px;margin-left:3px}.main{flex:1;display:flex;flex-direction:column;min-width:0}.head{height:58px;border-bottom:1px solid #fff1;display:flex;align-items:center;padding:0 18px;gap:10px;background:#101217}.head .name{font-weight:800}.head .muted{color:#8b8e98;font-size:12px}.messages{flex:1;overflow:auto;padding:20px}.msg{display:flex;gap:12px;margin:0 auto 15px;max-width:900px}.msg .body{flex:1;min-width:0}.author{font-weight:800;font-size:14px}.time{color:#70747e;font-size:10px;margin-left:7px}.text{margin-top:4px;white-space:pre-wrap;word-break:break-word;color:#e2e4e8;line-height:1.45}.pic{max-width:360px;max-height:280px;border-radius:9px;margin-top:8px}.composer{padding:12px 18px;background:#101217}.composer form{max-width:900px;margin:auto;display:flex;gap:8px;background:#1a1d23;border-radius:9px;padding:8px}.composer input{flex:1;background:transparent;border:0;outline:0;color:#fff;padding:7px}.send{background:#5865f2;color:#fff;border-radius:7px;padding:8px 14px;font-weight:800}.attach{background:#2a2e37;color:#ddd;border-radius:7px;padding:8px 10px}.empty{height:100%;display:flex;align-items:center;justify-content:center;color:#777d88;text-align:center}.modal{position:fixed;inset:0;background:#0009;display:none;align-items:center;justify-content:center;z-index:10}.box{width:min(430px,92vw);background:#181b21;border:1px solid #ffffff18;border-radius:12px;padding:20px;box-shadow:0 20px 70px #000}.box h2{margin-top:0}.box input{width:100%;padding:11px;border:1px solid #ffffff18;background:#0d0f13;color:#fff;border-radius:8px;outline:0;margin:7px 0 12px}.actions{display:flex;gap:8px;justify-content:flex-end}.cancel{background:#2a2d34;color:#fff;padding:9px 14px;border-radius:7px}.toast{position:fixed;right:18px;bottom:18px;background:#20242c;border:1px solid #ffffff18;border-radius:9px;padding:12px 15px;display:none;z-index:20;max-width:330px}.mobile{display:none}.ngbtn{background:#1b1e25;color:#ddd;border-radius:7px;padding:7px 9px}.nglist{display:flex;flex-direction:column;gap:7px}.ngrow{display:flex;align-items:center;gap:9px;background:#11141a;padding:9px;border-radius:8px}.nggrow{flex:1}
+*{box-sizing:border-box}html,body{margin:0;height:100%;font-family:Inter,Arial,sans-serif;background:#0b0d10;color:#fff;overflow:hidden}button,input{font:inherit}button{cursor:pointer;border:0}.app{height:100vh;display:flex}.rail{width:72px;background:#08090b;padding:12px 10px;display:flex;flex-direction:column;align-items:center;gap:9px;border-right:1px solid #ffffff0d}.srv{width:50px;height:50px;border-radius:16px;background:#191c22;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:17px;overflow:hidden;position:relative;transition:.15s}.srv:hover,.srv.active{background:#5865f2;border-radius:14px}.srv img{width:100%;height:100%;object-fit:cover}.plus{color:#66e3a0;font-size:26px}.dot{width:9px;height:9px;background:#52d273;border:2px solid #08090b;border-radius:50%;position:absolute;right:1px;bottom:1px}.sep{height:1px;width:34px;background:#fff1}.side{width:270px;background:#121419;border-right:1px solid #ffffff0d;display:flex;flex-direction:column}.top{height:58px;padding:11px 12px;border-bottom:1px solid #fff1;display:flex;align-items:center;font-weight:800}.search{margin:10px 12px;background:#08090b;border:1px solid #fff1;border-radius:8px;padding:10px;color:#fff;outline:0}.section{padding:8px 12px;color:#858993;font-size:11px;font-weight:800;text-transform:uppercase;display:flex;justify-content:space-between}.item{margin:2px 8px;padding:9px 10px;border-radius:7px;color:#b8bbc4;display:flex;gap:9px;align-items:center}.item:hover,.item.active{background:#242832;color:#fff}.ico{width:20px;text-align:center}.me{margin-top:auto;padding:10px;background:#0d0f13;display:flex;align-items:center;gap:9px}.avatar{width:34px;height:34px;border-radius:50%;background:#5865f2;display:flex;align-items:center;justify-content:center;font-weight:800;overflow:hidden}.avatar img{width:100%;height:100%;object-fit:cover}.verified{font-size:9px;background:#5865f2;padding:3px 5px;border-radius:5px;margin-left:3px}.main{flex:1;display:flex;flex-direction:column;min-width:0}.head{height:58px;border-bottom:1px solid #fff1;display:flex;align-items:center;padding:0 18px;gap:10px;background:#101217}.head .name{font-weight:800}.head .muted{color:#8b8e98;font-size:12px}.messages{flex:1;overflow:auto;padding:20px}.msg{display:flex;gap:12px;margin:0 auto 15px;max-width:900px}.msg .body{flex:1;min-width:0}.author{font-weight:800;font-size:14px}.time{color:#70747e;font-size:10px;margin-left:7px}.text{margin-top:4px;white-space:pre-wrap;word-break:break-word;color:#e2e4e8;line-height:1.45}.pic{max-width:360px;max-height:280px;border-radius:9px;margin-top:8px}.composer{padding:12px 18px;background:#101217}.composer form{max-width:900px;margin:auto;display:flex;gap:8px;background:#1a1d23;border-radius:9px;padding:8px}.composer input{flex:1;background:transparent;border:0;outline:0;color:#fff;padding:7px}.send{background:#5865f2;color:#fff;border-radius:7px;padding:8px 14px;font-weight:800}.attach{background:#2a2e37;color:#ddd;border-radius:7px;padding:8px 10px}.empty{height:100%;display:flex;align-items:center;justify-content:center;color:#777d88;text-align:center}.modal{position:fixed;inset:0;background:#0009;display:none;align-items:center;justify-content:center;z-index:10}.box{width:min(430px,92vw);background:#181b21;border:1px solid #ffffff18;border-radius:12px;padding:20px;box-shadow:0 20px 70px #000}.box h2{margin-top:0}.box input{width:100%;padding:11px;border:1px solid #ffffff18;background:#0d0f13;color:#fff;border-radius:8px;outline:0;margin:7px 0 12px}.actions{display:flex;gap:8px;justify-content:flex-end}.cancel{background:#2a2d34;color:#fff;padding:9px 14px;border-radius:7px}.toast{position:fixed;right:18px;bottom:18px;background:#20242c;border:1px solid #ffffff18;border-radius:9px;padding:12px 15px;display:none;z-index:20;max-width:330px}.mobile{display:none}
 @media(max-width:760px){.rail{width:58px;padding:9px 6px}.srv{width:43px;height:43px}.side{width:220px}.head{padding:0 10px}.messages{padding:12px}.composer{padding:8px}.mobile{display:block}.hide-mobile{display:none!important}}
-.avatar{background:#f5c400!important;color:#1c1700!important}.nglink{color:#8ea2ff;text-decoration:none}</style></head><body>
+</style></head><body>
 <div class="app">
 <aside class="rail" id="rail"><div class="srv active" title="New GG Oficial" onclick="selectServer(1)"><img src="/static/logo.jpg" onerror="this.style.display='none';this.parentNode.textContent='N'"><span class="dot"></span></div><div class="sep"></div><div id="servers"></div><div class="srv plus" onclick="openModal('serverModal')" title="Criar servidor">+</div></aside>
-<aside class="side"><div class="top">New GG</div><input id="search" class="search" placeholder="Buscar..." oninput="filterItems()"><div class="section">Canais <button onclick="openModal('channelModal')" style="background:none;color:#aaa;font-size:18px">+</button></div><div id="channels"></div><div class="section">Mensagens diretas <button onclick="openModal('dmModal')" style="background:none;color:#aaa;font-size:18px">+</button></div><div class="item active" id="aiItem" onclick="openAI()"><span class="ico">✦</span><span>New GG <b class="verified">OFICIAL</b></span></div><div id="dmList"></div><div class="item" onclick="openFriends()"><span class="ico">♟</span><span>Amigos</span></div><div class="item" onclick="openSettings()"><span class="ico">⚙</span><span>Configurações</span></div><div class="item" onclick="openNitro()"><span class="ico">◆</span><span>New GG Nitro</span></div><div class="item" onclick="loadNotifications()"><span class="ico">●</span><span>Notificações</span></div><div class="me"><div class="avatar" id="myAvatar">{usuario}</div><div style="min-width:0"><div style="font-size:13px;font-weight:800;overflow:hidden;text-overflow:ellipsis">{usuario}</div><div style="font-size:10px;color:#7f838d">Online</div></div></div></aside>
-<main class="main"><header class="head"><span id="title">New GG</span><span id="subtitle" class="muted">Assistente oficial</span></header><section class="messages" id="messages"><div class="empty">Carregando New GG...</div></section><div class="composer"><form onsubmit="sendMessage(event)"><label class="attach" title="Enviar imagem ou arquivo">＋<input id="file" type="file" hidden onchange="uploadImage()"></label><button type="button" class="attach" onclick="recordAudio()" id="mic" title="Gravar áudio">🎙</button><input id="input" autocomplete="off" placeholder="Mensagem para o New GG..."><button class="send">Enviar</button></form></div></main></div>
+<aside class="side"><div class="top">New GG</div><input id="search" class="search" placeholder="Buscar..." oninput="filterItems()"><div class="section">Canais <button onclick="openModal('channelModal')" style="background:none;color:#aaa;font-size:18px">+</button></div><div id="channels"></div><div class="section">Mensagens diretas <button onclick="openModal('dmModal')" style="background:none;color:#aaa;font-size:18px">+</button></div><div class="item active" id="aiItem" onclick="openAI()"><span class="ico">✦</span><span>New GG <b class="verified">OFICIAL</b></span></div><div id="dmList"></div><div class="item" onclick="loadNotifications()"><span class="ico">●</span><span>Notificações</span></div><div class="me"><div class="avatar" id="myAvatar">{usuario}</div><div style="min-width:0"><div style="font-size:13px;font-weight:800;overflow:hidden;text-overflow:ellipsis">{usuario}</div><div style="font-size:10px;color:#7f838d">Online</div></div></div></aside>
+<main class="main"><header class="head"><span id="title">New GG</span><span id="subtitle" class="muted">Assistente oficial</span></header><section class="messages" id="messages"><div class="empty">Carregando New GG...</div></section><div class="composer"><form onsubmit="sendMessage(event)"><label class="attach" title="Enviar imagem">＋<input id="file" type="file" accept="image/*" hidden onchange="uploadImage()"></label><input id="input" autocomplete="off" placeholder="Mensagem para o New GG..."><button class="send">Enviar</button></form></div></main></div>
 <div class="modal" id="serverModal"><div class="box"><h2>Criar servidor</h2><input id="serverName" placeholder="Nome do servidor"><div class="actions"><button class="cancel" onclick="closeModal('serverModal')">Cancelar</button><button class="send" onclick="createServer()">Criar</button></div></div></div>
 <div class="modal" id="channelModal"><div class="box"><h2>Novo canal</h2><input id="channelName" placeholder="Nome do canal"><div class="actions"><button class="cancel" onclick="closeModal('channelModal')">Cancelar</button><button class="send" onclick="createChannel()">Criar</button></div></div></div>
 <div class="modal" id="dmModal"><div class="box"><h2>Mensagem direta</h2><input id="dmName" placeholder="Nick do usuário"><div class="actions"><button class="cancel" onclick="closeModal('dmModal')">Cancelar</button><button class="send" onclick="openDM(document.getElementById('dmName').value)">Abrir</button></div></div></div>
-<div class="modal" id="friendsModal"><div class="box"><h2>Amigos</h2><input id="friendTarget" placeholder="Nick ou ID público"><div class="actions"><button class="send" onclick="addFriend()">Adicionar amigo</button></div><hr><div id="friendsList" class="nglist">Carregando...</div></div></div>
-<div class="modal" id="settingsModal"><div class="box"><h2>Configurações</h2><label>Biografia</label><textarea id="bio" rows="3" maxlength="300" style="width:100%;background:#0d0f13;color:#fff;border:1px solid #ffffff18;border-radius:8px;padding:10px"></textarea><label>Status</label><select id="status" style="width:100%;padding:10px;background:#0d0f13;color:#fff;border:1px solid #ffffff18;border-radius:8px;margin:8px 0 12px"><option>Online</option><option>Ausente</option><option>Não perturbe</option><option>Invisível</option></select><div class="actions"><button class="cancel" onclick="closeModal('settingsModal')">Fechar</button><button class="send" onclick="saveSettings()">Salvar</button></div></div></div>
-<div class="modal" id="nitroModal"><div class="box"><h2>New GG Nitro</h2><p id="nitroText">Carregando...</p><div id="nitroAdmin" style="display:none"><input id="nitroUser" placeholder="Nick ou ID para conceder Nitro"><div class="actions"><button class="send" onclick="grantNitro()">Conceder Nitro</button></div></div><div class="actions"><button class="cancel" onclick="closeModal('nitroModal')">Fechar</button></div></div></div><div class="toast" id="toast"></div>
+<div class="toast" id="toast"></div>
 <script>
 const ME="{usuario}";let servers=[],currentServer=1,currentChannel=null,currentMode='ai',currentDM=null,pendingImage=null;
 function esc(s){return String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
@@ -7076,20 +7048,11 @@ async function openDM(name){name=(name||'').trim();if(!name)return toast('Digite
 async function loadMessages(url){document.getElementById('messages').innerHTML='<div class="empty">Carregando...</div>';try{const rows=await api(url);document.getElementById('messages').innerHTML=rows.length?rows.map(renderMsg).join(''):'<div class="empty">Nenhuma mensagem ainda.<br>Envie a primeira.</div>';scrollBottom()}catch(e){document.getElementById('messages').innerHTML='<div class="empty">Não foi possível carregar as mensagens.</div>'}}
 function renderMsg(m){const avatar=m.remetente==='New GG'?'<div class="avatar">N</div>':`<div class="avatar">${esc((m.remetente||'?')[0].toUpperCase())}</div>`;return `<article class="msg">${avatar}<div class="body"><div class="author">${esc(m.remetente)} ${m.oficial?'<b class="verified">OFICIAL</b>':''}<span class="time">${esc((m.criado_em||'').replace('T',' ').slice(0,16))}</span></div><div class="text">${esc(m.conteudo||'')}</div>${m.imagem?`<img class="pic" src="${esc(m.imagem)}">`:''}</div></article>`}
 function scrollBottom(){const e=document.getElementById('messages');e.scrollTop=e.scrollHeight}
-async function sendMessage(ev){ev.preventDefault();const input=document.getElementById('input'),text=input.value.trim();if(!text&&!pendingImage)return;try{let url=pendingImage;let body={texto:text,imagem:url,tipo:window.ngAttachmentType||'imagem'};if(currentMode==='ai'){await api('/api/ng/ia/enviar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({texto:text})})}else if(currentMode==='channel'){await api('/api/ng/canal/'+currentChannel+'/enviar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})}else if(currentMode==='dm'){await api('/api/ng/dm/'+encodeURIComponent(currentDM)+'/enviar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})}input.value='';pendingImage=null;window.ngAttachmentType=null;document.getElementById('file').value='';if(currentMode==='ai')await loadMessages('/api/ng/ia/mensagens');else if(currentMode==='channel')await loadMessages('/api/ng/canal/'+currentChannel+'/mensagens');else await loadMessages('/api/ng/dm/'+encodeURIComponent(currentDM)+'/mensagens')}catch(e){toast(e.message)}}
-async function uploadImage(){const f=document.getElementById('file').files[0];if(!f)return;const fd=new FormData();fd.append('arquivo',f);try{const d=await api('/api/ng/upload',{method:'POST',body:fd});pendingImage=d.url;window.ngAttachmentType=f.type.startsWith('image/')?'imagem':'arquivo';toast('Arquivo pronto. Agora clique em Enviar.')}catch(e){toast(e.message)}}
+async function sendMessage(ev){ev.preventDefault();const input=document.getElementById('input'),text=input.value.trim();if(!text&&!pendingImage)return;try{let url=pendingImage;let body={texto:text,imagem:url};if(currentMode==='ai'){await api('/api/ng/ia/enviar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({texto:text})})}else if(currentMode==='channel'){await api('/api/ng/canal/'+currentChannel+'/enviar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})}else if(currentMode==='dm'){await api('/api/ng/dm/'+encodeURIComponent(currentDM)+'/enviar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})}input.value='';pendingImage=null;document.getElementById('file').value='';if(currentMode==='ai')await loadMessages('/api/ng/ia/mensagens');else if(currentMode==='channel')await loadMessages('/api/ng/canal/'+currentChannel+'/mensagens');else await loadMessages('/api/ng/dm/'+encodeURIComponent(currentDM)+'/mensagens')}catch(e){toast(e.message)}}
+async function uploadImage(){const f=document.getElementById('file').files[0];if(!f)return;const fd=new FormData();fd.append('arquivo',f);try{const d=await api('/api/ng/upload',{method:'POST',body:fd});pendingImage=d.url;toast('Imagem pronta. Agora envie a mensagem.')}catch(e){toast(e.message)}}
 async function createServer(){const nome=document.getElementById('serverName').value.trim();if(!nome)return;try{await api('/api/ng/servidor/criar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({nome})});closeModal('serverModal');document.getElementById('serverName').value='';await loadServers();toast('Servidor criado.')}catch(e){toast(e.message)}}
 async function createChannel(){const nome=document.getElementById('channelName').value.trim();if(!nome||!currentServer)return;try{await api('/api/ng/servidor/'+currentServer+'/canal',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({nome})});closeModal('channelModal');document.getElementById('channelName').value='';await loadServers();toast('Canal criado.')}catch(e){toast(e.message)}}
 async function loadNotifications(){try{const n=await api('/api/ng/notificacoes');toast(n.length?`${n.filter(x=>!x.lida).length} notificação(ões) nova(s).`:'Nenhuma notificação nova.')}catch(e){toast(e.message)}}
-async function openFriends(){openModal('friendsModal');await refreshFriends()}
-async function refreshFriends(){try{const list=await api('/api/ng/amigos');document.getElementById('friendsList').innerHTML=list.length?list.map(x=>`<div class="ngrow"><div class="avatar">${esc((x.usuario||'?')[0].toUpperCase())}</div><div class="nggrow"><b>${esc(x.usuario)}</b><div style="font-size:11px;color:#888">${esc(x.status)}</div></div>${x.recebido&&x.status==='pendente'?`<button class="send" onclick="answerFriend(${x.id},'aceitar')">Aceitar</button><button class="cancel" onclick="answerFriend(${x.id},'recusar')">Recusar</button>`:x.status==='aceito'?`<button class="send" onclick="openDM('${esc(x.usuario)}')">Mensagem</button>`:''}</div>`).join(''):'Nenhum pedido ou amizade ainda.'}catch(e){document.getElementById('friendsList').textContent=e.message}}
-async function addFriend(){const alvo=document.getElementById('friendTarget').value.trim();if(!alvo)return toast('Digite um nick ou ID.');try{const d=await api('/api/ng/amigos/adicionar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({alvo})});toast(d.mensagem||'Pedido enviado.');document.getElementById('friendTarget').value='';refreshFriends()}catch(e){toast(e.message)}}
-async function answerFriend(id,acao){try{await api('/api/ng/amigos/responder',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,acao})});refreshFriends()}catch(e){toast(e.message)}}
-async function openSettings(){openModal('settingsModal');try{const d=await api('/api/ng/perfil');document.getElementById('bio').value=d.bio||'';document.getElementById('status').value=d.status||'Online'}catch(e){}}
-async function saveSettings(){try{await api('/api/ng/perfil/salvar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({bio:document.getElementById('bio').value,status:document.getElementById('status').value})});closeModal('settingsModal');toast('Configurações salvas.')}catch(e){toast(e.message)}}
-async function openNitro(){openModal('nitroModal');try{const d=await api('/api/ng/nitro');document.getElementById('nitroText').innerHTML=d.ativo?'<b>Seu New GG Nitro está ativo.</b>':'Seu New GG Nitro não está ativo.';document.getElementById('nitroAdmin').style.display=ME.toLowerCase()==='samuca12349116'?'block':'none'}catch(e){document.getElementById('nitroText').textContent=e.message}}
-async function grantNitro(){const alvo=document.getElementById('nitroUser').value.trim();if(!alvo)return;try{await api('/api/ng/nitro',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({usuario:alvo,ativo:true})});toast('Nitro concedido.');document.getElementById('nitroUser').value=''}catch(e){toast(e.message)}}
-async function recordAudio(){if(!navigator.mediaDevices?.getUserMedia)return toast('Microfone não disponível.');if(window.ngRec?.state==='recording'){window.ngRec.stop();return}try{const stream=await navigator.mediaDevices.getUserMedia({audio:true});const rec=new MediaRecorder(stream);const chunks=[];window.ngRec=rec;rec.ondataavailable=e=>{if(e.data.size)chunks.push(e.data)};rec.onstop=async()=>{stream.getTracks().forEach(t=>t.stop());const fd=new FormData();fd.append('arquivo',new Blob(chunks,{type:'audio/webm'}),'audio.webm');try{const d=await api('/api/ng/upload',{method:'POST',body:fd});pendingImage=d.url;window.ngAttachmentType='audio';toast('Áudio pronto. Escreva uma mensagem e envie.')}catch(e){toast(e.message)}};rec.start();toast('Gravando... clique no microfone para parar.')}catch(e){toast('Não foi possível usar o microfone.')}}
 function filterItems(){const q=document.getElementById('search').value.toLowerCase();document.querySelectorAll('.item').forEach(x=>x.style.display=x.textContent.toLowerCase().includes(q)?'flex':'none')}
 loadServers();openAI();setInterval(()=>{if(currentMode==='ai')loadMessages('/api/ng/ia/mensagens');else if(currentMode==='channel'&&currentChannel)loadMessages('/api/ng/canal/'+currentChannel+'/mensagens');else if(currentMode==='dm'&&currentDM)loadMessages('/api/ng/dm/'+encodeURIComponent(currentDM)+'/mensagens')},5000);
 </script></body></html>'''
@@ -8059,17 +8022,17 @@ def ng_api_canal_mensagens(cid):
     u=session['usuario']; c=obter_bd(); ch=c.execute('SELECT * FROM ng_canais WHERE id=?',(cid,)).fetchone()
     if not ch or not ng_e_membro(c,ch['servidor_id'],u): c.close(); return jsonify([]),403
     rows=c.execute('SELECT * FROM ng_mensagens WHERE canal_id=? ORDER BY id DESC LIMIT 150',(cid,)).fetchall(); out=[]
-    for r in reversed(rows): out.append({'id':r['id'],'remetente':r['remetente'],'conteudo':ng_decifrar(r['conteudo']) if r['criptografado'] else r['conteudo'],'imagem':r['imagem'],'tipo':r['tipo'] if 'tipo' in r.keys() else 'texto','nome_arquivo':r['nome_arquivo'] if 'nome_arquivo' in r.keys() else None,'criado_em':r['criado_em'],'oficial':r['remetente'].lower()==NEWGG_BOT.lower()})
+    for r in reversed(rows): out.append({'id':r['id'],'remetente':r['remetente'],'conteudo':ng_decifrar(r['conteudo']) if r['criptografado'] else r['conteudo'],'imagem':r['imagem'],'criado_em':r['criado_em'],'oficial':r['remetente'].lower()==NEWGG_BOT.lower()})
     c.close(); return jsonify(out)
 
 @app.route('/api/ng/canal/<int:cid>/enviar',methods=['POST'])
 def ng_api_canal_enviar(cid):
     if not session.get('usuario'): return jsonify({'ok':False}),401
-    u=session['usuario']; d=request.get_json() or {}; texto=(d.get('texto') or '').strip(); imagem=d.get('imagem') or None; tipo=d.get('tipo','texto'); nome_arquivo=d.get('nome_arquivo')
+    u=session['usuario']; d=request.get_json() or {}; texto=(d.get('texto') or '').strip(); imagem=d.get('imagem') or None
     if not texto and not imagem: return jsonify({'ok':False,'erro':'Mensagem vazia.'})
     c=obter_bd(); ch=c.execute('SELECT * FROM ng_canais WHERE id=?',(cid,)).fetchone()
     if not ch or not ng_e_membro(c,ch['servidor_id'],u): c.close(); return jsonify({'ok':False,'erro':'Sem acesso.'}),403
-    agora=datetime.now().isoformat(); c.execute('INSERT INTO ng_mensagens (canal_id,remetente,conteudo,imagem,criado_em,criptografado) VALUES (?,?,?,?,?,1,?,?)',(cid,u,ng_cifrar(texto),imagem,agora,tipo,nome_arquivo)); c.commit(); c.close()
+    agora=datetime.now().isoformat(); c.execute('INSERT INTO ng_mensagens (canal_id,remetente,conteudo,imagem,criado_em,criptografado) VALUES (?,?,?,?,?,1)',(cid,u,ng_cifrar(texto),imagem,agora)); c.commit(); c.close()
     return jsonify({'ok':True})
 
 @app.route('/api/ng/dm/<contato>/mensagens')
@@ -8079,7 +8042,7 @@ def ng_api_dm_mensagens(contato):
     if not alvo: return jsonify([])
     conv='|'.join(sorted([u.lower(),alvo['usuario'].lower()]))
     c=obter_bd(); rows=c.execute("SELECT * FROM ng_mensagens WHERE conversa=? ORDER BY id DESC LIMIT 150",(conv,)).fetchall(); out=[]
-    for r in reversed(rows): out.append({'id':r['id'],'remetente':r['remetente'],'conteudo':ng_decifrar(r['conteudo']) if r['criptografado'] else r['conteudo'],'imagem':r['imagem'],'tipo':r['tipo'] if 'tipo' in r.keys() else 'texto','nome_arquivo':r['nome_arquivo'] if 'nome_arquivo' in r.keys() else None,'criado_em':r['criado_em'],'oficial':r['remetente'].lower()==NEWGG_BOT.lower()})
+    for r in reversed(rows): out.append({'id':r['id'],'remetente':r['remetente'],'conteudo':ng_decifrar(r['conteudo']) if r['criptografado'] else r['conteudo'],'imagem':r['imagem'],'criado_em':r['criado_em'],'oficial':r['remetente'].lower()==NEWGG_BOT.lower()})
     c.close(); return jsonify(out)
 
 @app.route('/api/ng/dm/<contato>/enviar',methods=['POST'])
@@ -8088,15 +8051,16 @@ def ng_api_dm_enviar(contato):
     u=session['usuario']; alvo=buscar_usuario(contato); d=request.get_json() or {}; texto=(d.get('texto') or '').strip(); imagem=d.get('imagem') or None
     if not alvo: return jsonify({'ok':False,'erro':'Usuario nao encontrado.'})
     if not texto and not imagem: return jsonify({'ok':False,'erro':'Mensagem vazia.'})
-    conv='|'.join(sorted([u.lower(),alvo['usuario'].lower()])); c=obter_bd(); c.execute('INSERT INTO ng_mensagens (conversa,remetente,destinatario,conteudo,imagem,criado_em,criptografado) VALUES (?,?,?,?,?,?,1,?,?)',(conv,u,alvo['usuario'],ng_cifrar(texto),imagem,datetime.now().isoformat(),tipo,nome_arquivo)); c.commit(); c.close()
+    conv='|'.join(sorted([u.lower(),alvo['usuario'].lower()])); c=obter_bd(); c.execute('INSERT INTO ng_mensagens (conversa,remetente,destinatario,conteudo,imagem,criado_em,criptografado) VALUES (?,?,?,?,?,?,1)',(conv,u,alvo['usuario'],ng_cifrar(texto),imagem,datetime.now().isoformat())); c.commit(); c.close()
     ng_notificar(alvo['usuario'],'mensagem','Nova mensagem',f'{u} enviou uma mensagem.')
     return jsonify({'ok':True})
 
+@app.route('/api/ng/ia/mensagens')
 @app.route('/api/ng/dm/ia/mensagens')
 def ng_api_ia_mensagens():
     if not session.get('usuario'): return jsonify([]),401
     u=session['usuario']; conv='ia|'+u.lower(); c=obter_bd(); rows=c.execute("SELECT * FROM ng_mensagens WHERE conversa=? ORDER BY id DESC LIMIT 150",(conv,)).fetchall(); out=[]
-    for r in reversed(rows): out.append({'id':r['id'],'remetente':r['remetente'],'conteudo':ng_decifrar(r['conteudo']) if r['criptografado'] else r['conteudo'],'imagem':r['imagem'],'tipo':r['tipo'] if 'tipo' in r.keys() else 'texto','nome_arquivo':r['nome_arquivo'] if 'nome_arquivo' in r.keys() else None,'criado_em':r['criado_em'],'oficial':r['remetente'].lower()==NEWGG_BOT.lower()})
+    for r in reversed(rows): out.append({'id':r['id'],'remetente':r['remetente'],'conteudo':ng_decifrar(r['conteudo']) if r['criptografado'] else r['conteudo'],'imagem':r['imagem'],'criado_em':r['criado_em'],'oficial':r['remetente'].lower()==NEWGG_BOT.lower()})
     c.close(); return jsonify(out)
 
 @app.route('/api/ng/ia/enviar',methods=['POST'])
@@ -8111,7 +8075,7 @@ def ng_api_ia_enviar():
     try: resposta=gerar_resposta_ia([sistema]+historico)
     except Exception: resposta='[ENCAMINHAR] Nao consegui responder agora. Vou encaminhar sua pergunta para a equipe.'
     encaminhar=resposta.strip().startswith('[ENCAMINHAR]')
-    if encaminhar: resposta=re.sub(r'^\\[ENCAMINHAR\\]\\s*','',resposta.strip()) or 'Nao consegui responder agora. Vou encaminhar sua pergunta para a equipe.'
+    if encaminhar: resposta=re.sub(r'^\[ENCAMINHAR\]\s*','',resposta.strip()) or 'Nao consegui responder agora. Vou encaminhar sua pergunta para a equipe.'
     c=obter_bd(); c.execute('INSERT INTO ng_mensagens (conversa,remetente,destinatario,conteudo,criado_em,criptografado) VALUES (?,?,?,?,?,1)',(conv,NEWGG_BOT,u,ng_cifrar(resposta),datetime.now().isoformat())); c.commit(); c.close()
     if encaminhar:
         ng_notificar(NEWGG_OWNER_NICK,'ia','A New GG precisa de ajuda',f'Usuario {u}: {texto}')
@@ -8142,213 +8106,7 @@ def ng_api_upload():
     return jsonify({'ok':True,'url':url})
 
 
-# ===== NEW GG: aliases e recursos =====
-@app.route('/api/ng/ia/mensagens')
-def ng_api_ia_mensagens_alias():
-    return ng_api_ia_mensagens()
-
-@app.route('/api/ng/perfil')
-def ng_api_perfil():
-    if not session.get('usuario'): return jsonify({'ok':False}),401
-    u=session['usuario']; c=obter_bd()
-    r=c.execute('SELECT * FROM ng_perfil WHERE usuario=? COLLATE NOCASE',(u,)).fetchone()
-    n=c.execute('SELECT * FROM ng_nitro WHERE usuario=? COLLATE NOCASE',(u,)).fetchone()
-    c.close()
-    return jsonify({'ok':True,'usuario':u,'bio':r['bio'] if r else '','avatar':r['avatar'] if r else None,'status':r['status'] if r else 'Online','nitro':bool(n and n['ativo'])})
-
-@app.route('/api/ng/perfil/salvar',methods=['POST'])
-def ng_api_perfil_salvar():
-    if not session.get('usuario'): return jsonify({'ok':False}),401
-    u=session['usuario']; d=request.get_json() or {}
-    bio=(d.get('bio') or '')[:300]; status=(d.get('status') or 'Online')[:30]
-    c=obter_bd(); c.execute("""INSERT INTO ng_perfil(usuario,bio,status,atualizado_em) VALUES(?,?,?,?)
-        ON CONFLICT(usuario) DO UPDATE SET bio=excluded.bio,status=excluded.status,atualizado_em=excluded.atualizado_em""",
-        (u,bio,status,datetime.now().isoformat())); c.commit(); c.close()
-    return jsonify({'ok':True})
-
-@app.route('/api/ng/amigos')
-def ng_api_amigos():
-    if not session.get('usuario'): return jsonify([]),401
-    u=session['usuario']; c=obter_bd()
-    rows=c.execute("""SELECT id,de_usuario,para_usuario,status,criado_em FROM ng_amizades
-        WHERE de_usuario=? COLLATE NOCASE OR para_usuario=? COLLATE NOCASE ORDER BY id DESC""",(u,u)).fetchall()
-    out=[]
-    for r in rows:
-        alvo=r['para_usuario'] if r['de_usuario'].lower()==u.lower() else r['de_usuario']
-        out.append({'id':r['id'],'usuario':alvo,'status':r['status'],'recebido':r['para_usuario'].lower()==u.lower(),'criado_em':r['criado_em']})
-    c.close(); return jsonify(out)
-
-@app.route('/api/ng/amigos/adicionar',methods=['POST'])
-def ng_api_amigo_adicionar():
-    if not session.get('usuario'): return jsonify({'ok':False}),401
-    u=session['usuario']; d=request.get_json() or {}; alvo=buscar_usuario_por_nick_ou_id(d.get('alvo',''))
-    if not alvo: return jsonify({'ok':False,'erro':'Usuário não encontrado.'})
-    v=alvo['usuario']
-    if v.lower()==u.lower(): return jsonify({'ok':False,'erro':'Você não pode adicionar a si mesmo.'})
-    c=obter_bd()
-    ex=c.execute("""SELECT id,status FROM ng_amizades WHERE
-        (de_usuario=? COLLATE NOCASE AND para_usuario=? COLLATE NOCASE) OR
-        (de_usuario=? COLLATE NOCASE AND para_usuario=? COLLATE NOCASE)""",(u,v,v,u)).fetchone()
-    if ex: c.close(); return jsonify({'ok':False,'erro':'Já existe um pedido ou amizade.'})
-    c.execute("INSERT INTO ng_amizades(de_usuario,para_usuario,status,criado_em) VALUES(?,?,?,?)",(u,v,'pendente',datetime.now().isoformat()))
-    c.commit(); c.close(); ng_notificar(v,'amizade','Novo pedido de amizade',f'{u} enviou um pedido de amizade.')
-    return jsonify({'ok':True,'mensagem':'Pedido enviado.'})
-
-@app.route('/api/ng/amigos/responder',methods=['POST'])
-def ng_api_amigo_responder():
-    if not session.get('usuario'): return jsonify({'ok':False}),401
-    u=session['usuario']; d=request.get_json() or {}; aid=d.get('id'); acao=d.get('acao')
-    if acao not in ('aceitar','recusar'): return jsonify({'ok':False,'erro':'Ação inválida.'})
-    c=obter_bd(); r=c.execute("SELECT * FROM ng_amizades WHERE id=? AND para_usuario=? COLLATE NOCASE AND status='pendente'",(aid,u)).fetchone()
-    if not r: c.close(); return jsonify({'ok':False,'erro':'Pedido não encontrado.'})
-    st='aceito' if acao=='aceitar' else 'recusado'; c.execute("UPDATE ng_amizades SET status=? WHERE id=?",(st,aid)); c.commit(); c.close()
-    if st=='aceito': ng_notificar(r['de_usuario'],'amizade','Pedido aceito',f'{u} aceitou seu pedido.')
-    return jsonify({'ok':True,'status':st})
-
-@app.route('/api/ng/nitro',methods=['GET','POST'])
-def ng_api_nitro():
-    if not session.get('usuario'): return jsonify({'ok':False}),401
-    u=session['usuario']; c=obter_bd()
-    if request.method=='GET':
-        r=c.execute("SELECT * FROM ng_nitro WHERE usuario=? COLLATE NOCASE",(u,)).fetchone(); c.close()
-        return jsonify({'ok':True,'ativo':bool(r and r['ativo']),'plano':r['plano'] if r else None})
-    if not ng_eh_admin(u): c.close(); return jsonify({'ok':False,'erro':'Somente o dono pode administrar o Nitro.'}),403
-    d=request.get_json() or {}; alvo=buscar_usuario_por_nick_ou_id(d.get('usuario',''))
-    if not alvo: c.close(); return jsonify({'ok':False,'erro':'Usuário não encontrado.'})
-    ativo=1 if d.get('ativo',True) else 0
-    c.execute("""INSERT INTO ng_nitro(usuario,ativo,concedido_por,plano,criado_em) VALUES(?,?,?,?,?)
-        ON CONFLICT(usuario) DO UPDATE SET ativo=excluded.ativo,concedido_por=excluded.concedido_por,plano=excluded.plano""",
-        (alvo['usuario'],ativo,u,'New GG Nitro',datetime.now().isoformat()))
-    c.commit(); c.close(); return jsonify({'ok':True,'usuario':alvo['usuario'],'ativo':bool(ativo)})
-
-@app.route('/api/ng/servidor/<int:sid>/cargos')
-def ng_api_cargos(sid):
-    if not session.get('usuario'): return jsonify([]),401
-    u=session['usuario']; c=obter_bd()
-    s=c.execute("SELECT * FROM ng_servidores WHERE id=?",(sid,)).fetchone()
-    if not s or not ng_e_membro(c,sid,u): c.close(); return jsonify([]),403
-    rows=c.execute("SELECT * FROM ng_cargos WHERE servidor_id=? ORDER BY posicao DESC,id",(sid,)).fetchall(); c.close()
-    return jsonify([dict(r) for r in rows])
-
-@app.route('/api/ng/servidor/<int:sid>/cargo',methods=['POST'])
-def ng_api_cargo_criar(sid):
-    if not session.get('usuario'): return jsonify({'ok':False}),401
-    u=session['usuario']; d=request.get_json() or {}; nome=(d.get('nome') or '').strip()[:40]
-    c=obter_bd(); s=c.execute("SELECT * FROM ng_servidores WHERE id=?",(sid,)).fetchone()
-    if not s or not (ng_eh_admin(u) or s['criado_por'].lower()==u.lower()): c.close(); return jsonify({'ok':False,'erro':'Sem permissão.'}),403
-    if not nome: c.close(); return jsonify({'ok':False,'erro':'Nome obrigatório.'})
-    pos=c.execute("SELECT COALESCE(MAX(posicao),0)+1 p FROM ng_cargos WHERE servidor_id=?",(sid,)).fetchone()['p']
-    cur=c.execute("""INSERT INTO ng_cargos(servidor_id,nome,cor,posicao,administrador,ver_canais,enviar_mensagens,anexar_arquivos,criado_em)
-        VALUES(?,?,?,?,?,?,?,?,?)""",(sid,nome,d.get('cor') or '#5865f2',pos,int(bool(d.get('administrador'))),1,1,1,datetime.now().isoformat()))
-    c.commit(); cid=cur.lastrowid; c.close(); return jsonify({'ok':True,'id':cid})
-
-
 if __name__ == "__main__":
     porta = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=porta)
 
-
-# ===== NEW GG: aliases e recursos =====
-@app.route('/api/ng/ia/mensagens')
-def ng_api_ia_mensagens_alias():
-    return ng_api_ia_mensagens()
-
-@app.route('/api/ng/perfil')
-def ng_api_perfil():
-    if not session.get('usuario'): return jsonify({'ok':False}),401
-    u=session['usuario']; c=obter_bd()
-    r=c.execute('SELECT * FROM ng_perfil WHERE usuario=? COLLATE NOCASE',(u,)).fetchone()
-    n=c.execute('SELECT * FROM ng_nitro WHERE usuario=? COLLATE NOCASE',(u,)).fetchone()
-    c.close()
-    return jsonify({'ok':True,'usuario':u,'bio':r['bio'] if r else '','avatar':r['avatar'] if r else None,'status':r['status'] if r else 'Online','nitro':bool(n and n['ativo'])})
-
-@app.route('/api/ng/perfil/salvar',methods=['POST'])
-def ng_api_perfil_salvar():
-    if not session.get('usuario'): return jsonify({'ok':False}),401
-    u=session['usuario']; d=request.get_json() or {}
-    bio=(d.get('bio') or '')[:300]; status=(d.get('status') or 'Online')[:30]
-    c=obter_bd(); c.execute("""INSERT INTO ng_perfil(usuario,bio,status,atualizado_em) VALUES(?,?,?,?)
-        ON CONFLICT(usuario) DO UPDATE SET bio=excluded.bio,status=excluded.status,atualizado_em=excluded.atualizado_em""",
-        (u,bio,status,datetime.now().isoformat())); c.commit(); c.close()
-    return jsonify({'ok':True})
-
-@app.route('/api/ng/amigos')
-def ng_api_amigos():
-    if not session.get('usuario'): return jsonify([]),401
-    u=session['usuario']; c=obter_bd()
-    rows=c.execute("""SELECT id,de_usuario,para_usuario,status,criado_em FROM ng_amizades
-        WHERE de_usuario=? COLLATE NOCASE OR para_usuario=? COLLATE NOCASE ORDER BY id DESC""",(u,u)).fetchall()
-    out=[]
-    for r in rows:
-        alvo=r['para_usuario'] if r['de_usuario'].lower()==u.lower() else r['de_usuario']
-        out.append({'id':r['id'],'usuario':alvo,'status':r['status'],'recebido':r['para_usuario'].lower()==u.lower(),'criado_em':r['criado_em']})
-    c.close(); return jsonify(out)
-
-@app.route('/api/ng/amigos/adicionar',methods=['POST'])
-def ng_api_amigo_adicionar():
-    if not session.get('usuario'): return jsonify({'ok':False}),401
-    u=session['usuario']; d=request.get_json() or {}; alvo=buscar_usuario_por_nick_ou_id(d.get('alvo',''))
-    if not alvo: return jsonify({'ok':False,'erro':'Usuário não encontrado.'})
-    v=alvo['usuario']
-    if v.lower()==u.lower(): return jsonify({'ok':False,'erro':'Você não pode adicionar a si mesmo.'})
-    c=obter_bd()
-    ex=c.execute("""SELECT id,status FROM ng_amizades WHERE
-        (de_usuario=? COLLATE NOCASE AND para_usuario=? COLLATE NOCASE) OR
-        (de_usuario=? COLLATE NOCASE AND para_usuario=? COLLATE NOCASE)""",(u,v,v,u)).fetchone()
-    if ex: c.close(); return jsonify({'ok':False,'erro':'Já existe um pedido ou amizade.'})
-    c.execute("INSERT INTO ng_amizades(de_usuario,para_usuario,status,criado_em) VALUES(?,?,?,?)",(u,v,'pendente',datetime.now().isoformat()))
-    c.commit(); c.close(); ng_notificar(v,'amizade','Novo pedido de amizade',f'{u} enviou um pedido de amizade.')
-    return jsonify({'ok':True,'mensagem':'Pedido enviado.'})
-
-@app.route('/api/ng/amigos/responder',methods=['POST'])
-def ng_api_amigo_responder():
-    if not session.get('usuario'): return jsonify({'ok':False}),401
-    u=session['usuario']; d=request.get_json() or {}; aid=d.get('id'); acao=d.get('acao')
-    if acao not in ('aceitar','recusar'): return jsonify({'ok':False,'erro':'Ação inválida.'})
-    c=obter_bd(); r=c.execute("SELECT * FROM ng_amizades WHERE id=? AND para_usuario=? COLLATE NOCASE AND status='pendente'",(aid,u)).fetchone()
-    if not r: c.close(); return jsonify({'ok':False,'erro':'Pedido não encontrado.'})
-    st='aceito' if acao=='aceitar' else 'recusado'; c.execute("UPDATE ng_amizades SET status=? WHERE id=?",(st,aid)); c.commit(); c.close()
-    if st=='aceito': ng_notificar(r['de_usuario'],'amizade','Pedido aceito',f'{u} aceitou seu pedido.')
-    return jsonify({'ok':True,'status':st})
-
-@app.route('/api/ng/nitro',methods=['GET','POST'])
-def ng_api_nitro():
-    if not session.get('usuario'): return jsonify({'ok':False}),401
-    u=session['usuario']; c=obter_bd()
-    if request.method=='GET':
-        r=c.execute("SELECT * FROM ng_nitro WHERE usuario=? COLLATE NOCASE",(u,)).fetchone(); c.close()
-        return jsonify({'ok':True,'ativo':bool(r and r['ativo']),'plano':r['plano'] if r else None})
-    if not ng_eh_admin(u): c.close(); return jsonify({'ok':False,'erro':'Somente o dono pode administrar o Nitro.'}),403
-    d=request.get_json() or {}; alvo=buscar_usuario_por_nick_ou_id(d.get('usuario',''))
-    if not alvo: c.close(); return jsonify({'ok':False,'erro':'Usuário não encontrado.'})
-    ativo=1 if d.get('ativo',True) else 0
-    c.execute("""INSERT INTO ng_nitro(usuario,ativo,concedido_por,plano,criado_em) VALUES(?,?,?,?,?)
-        ON CONFLICT(usuario) DO UPDATE SET ativo=excluded.ativo,concedido_por=excluded.concedido_por,plano=excluded.plano""",
-        (alvo['usuario'],ativo,u,'New GG Nitro',datetime.now().isoformat()))
-    c.commit(); c.close(); return jsonify({'ok':True,'usuario':alvo['usuario'],'ativo':bool(ativo)})
-
-@app.route('/api/ng/servidor/<int:sid>/cargos')
-def ng_api_cargos(sid):
-    if not session.get('usuario'): return jsonify([]),401
-    u=session['usuario']; c=obter_bd()
-    s=c.execute("SELECT * FROM ng_servidores WHERE id=?",(sid,)).fetchone()
-    if not s or not ng_e_membro(c,sid,u): c.close(); return jsonify([]),403
-    rows=c.execute("SELECT * FROM ng_cargos WHERE servidor_id=? ORDER BY posicao DESC,id",(sid,)).fetchall(); c.close()
-    return jsonify([dict(r) for r in rows])
-
-@app.route('/api/ng/servidor/<int:sid>/cargo',methods=['POST'])
-def ng_api_cargo_criar(sid):
-    if not session.get('usuario'): return jsonify({'ok':False}),401
-    u=session['usuario']; d=request.get_json() or {}; nome=(d.get('nome') or '').strip()[:40]
-    c=obter_bd(); s=c.execute("SELECT * FROM ng_servidores WHERE id=?",(sid,)).fetchone()
-    if not s or not (ng_eh_admin(u) or s['criado_por'].lower()==u.lower()): c.close(); return jsonify({'ok':False,'erro':'Sem permissão.'}),403
-    if not nome: c.close(); return jsonify({'ok':False,'erro':'Nome obrigatório.'})
-    pos=c.execute("SELECT COALESCE(MAX(posicao),0)+1 p FROM ng_cargos WHERE servidor_id=?",(sid,)).fetchone()['p']
-    cur=c.execute("""INSERT INTO ng_cargos(servidor_id,nome,cor,posicao,administrador,ver_canais,enviar_mensagens,anexar_arquivos,criado_em)
-        VALUES(?,?,?,?,?,?,?,?,?)""",(sid,nome,d.get('cor') or '#5865f2',pos,int(bool(d.get('administrador'))),1,1,1,datetime.now().isoformat()))
-    c.commit(); cid=cur.lastrowid; c.close(); return jsonify({'ok':True,'id':cid})
-
-
-if __name__ == "__main__":
-    porta = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=porta)
