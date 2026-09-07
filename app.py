@@ -24,6 +24,8 @@ import json
 import uuid
 import secrets
 import sqlite3
+import urllib.request
+import urllib.parse
 from datetime import datetime, timedelta
 
 from flask import Flask, request, jsonify, session, redirect, url_for
@@ -46,6 +48,12 @@ NOME_APP = "New GG AI"
 # Dono/admin permanente do site - independe de quem criou a conta primeiro.
 # Se o seu apelido de login for outro, troque so essa linha.
 CONTA_DONO = "SAMUCA"
+
+# Login com Google (opcional). Sem essa variavel configurada, o botao de
+# Google simplesmente nao aparece na tela de login e continua so
+# apelido+senha. Crie um Client ID em https://console.cloud.google.com/apis/credentials
+# (tipo "Aplicativo da Web", com a URL do site em "Origens JavaScript autorizadas").
+GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "")
 
 MINUTOS_CONSIDERADO_ONLINE = 3
 SEGUNDOS_DIGITANDO_VALE = 6
@@ -128,7 +136,7 @@ def iniciar_bd():
     """)
     for coluna, definicao in [
         ("banner", "TEXT"), ("bio", "TEXT"), ("eh_admin", "INTEGER DEFAULT 0"),
-        ("premium", "INTEGER DEFAULT 0"), ("banido", "INTEGER DEFAULT 0"),
+        ("premium", "INTEGER DEFAULT 0"), ("banido", "INTEGER DEFAULT 0"), ("email", "TEXT"),
     ]:
         _adicionar_coluna_se_faltar(conexao, "usuarios", coluna, definicao)
 
@@ -696,6 +704,9 @@ body { display:flex; align-items:center; justify-content:center; height:100vh;
 .botao-login:disabled { opacity:0.6; cursor:default; }
 .erro-login { color:#fa777c; font-size:13px; margin-top:12px; min-height:16px; text-align:center; }
 .aviso-id { font-size:12px; color:#949ba4; margin-top:-8px; margin-bottom:16px; }
+.divisor-login { display:flex; align-items:center; gap:10px; color:#80848e; font-size:12px; margin:18px 0; }
+.divisor-login::before, .divisor-login::after { content:""; flex:1; height:1px; background:#40424980; }
+.bloco-google-login { display:flex; justify-content:center; margin-bottom:4px; }
 """
 
 CORPO_LOGIN = """
@@ -705,6 +716,7 @@ CORPO_LOGIN = """
     <h1>New GG AI</h1>
     <p>Converse com seus amigos e servidores.</p>
   </div>
+  {bloco_google}
   <div class="abas-login">
     <button id="abaEntrar" class="ativa" onclick="mudarAba('entrar')">Entrar</button>
     <button id="abaCriar" onclick="mudarAba('criar')">Criar conta</button>
@@ -766,6 +778,18 @@ async function enviarCriar(ev) {
     botao.disabled = false; botao.textContent = 'Criar conta';
     return false;
 }
+function aoLoginGoogle(resposta) {
+    const erro = document.getElementById('erroEntrar');
+    erro.textContent = '';
+    fetch('/auth/google', { method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ credential: resposta.credential }) })
+    .then(r => r.json())
+    .then(d => {
+        if (d.ok) { window.location.href = '/app'; }
+        else { erro.textContent = d.erro || 'Nao foi possivel entrar com o Google.'; }
+    })
+    .catch(() => { erro.textContent = 'Falha ao conectar com o Google.'; });
+}
 </script>
 """
 
@@ -795,7 +819,74 @@ def raiz():
         if linha and linha["banido"]:
             return pagina_html(NOME_APP, PAGINA_BANIDO)
         return redirect(url_for("pagina_app"))
-    return pagina_html(NOME_APP, CORPO_LOGIN, ESTILO_LOGIN)
+    if GOOGLE_CLIENT_ID:
+        bloco_google = f"""
+        <script src="https://accounts.google.com/gsi/client" async defer></script>
+        <div id="g_id_onload" data-client_id="{GOOGLE_CLIENT_ID}" data-callback="aoLoginGoogle" data-auto_prompt="false"></div>
+        <div class="bloco-google-login">
+          <div class="g_id_signin" data-type="standard" data-shape="pill" data-theme="filled_black"
+               data-text="continue_with" data-size="large" data-logo_alignment="left" data-width="336"></div>
+        </div>
+        <div class="divisor-login">ou continue com apelido e senha</div>
+        """
+    else:
+        bloco_google = ""
+    corpo = CORPO_LOGIN.replace("{bloco_google}", bloco_google)
+    return pagina_html(NOME_APP, corpo, ESTILO_LOGIN)
+
+
+@app.route("/auth/google", methods=["POST"])
+def auth_google():
+    """Verifica o token do Google Identity Services e loga (ou cria a conta)."""
+    if not GOOGLE_CLIENT_ID:
+        return jsonify({"ok": False, "erro": "Login com Google nao esta configurado neste servidor."}), 400
+    dados = request.get_json() or {}
+    token = (dados.get("credential") or "").strip()
+    if not token:
+        return jsonify({"ok": False, "erro": "Token ausente."}), 400
+    try:
+        with urllib.request.urlopen(
+            "https://oauth2.googleapis.com/tokeninfo?id_token=" + urllib.parse.quote(token), timeout=8
+        ) as resposta_http:
+            info = json.loads(resposta_http.read().decode())
+    except Exception:
+        return jsonify({"ok": False, "erro": "Nao foi possivel validar o login do Google."}), 400
+    if info.get("aud") != GOOGLE_CLIENT_ID:
+        return jsonify({"ok": False, "erro": "Token nao pertence a este site."}), 400
+    email = (info.get("email") or "").strip().lower()
+    if not email or str(info.get("email_verified")).lower() != "true":
+        return jsonify({"ok": False, "erro": "Email do Google nao verificado."}), 400
+    nome_google = (info.get("name") or email.split("@")[0]).strip()
+
+    conexao = obter_bd()
+    linha = conexao.execute("SELECT * FROM usuarios WHERE email = ? COLLATE NOCASE", (email,)).fetchone()
+    if linha:
+        conexao.close()
+        if linha["banido"]:
+            return jsonify({"ok": False, "erro": "Sua conta foi banida."})
+        session["usuario"] = linha["usuario"]
+        marcar_atividade(linha["usuario"])
+        return jsonify({"ok": True})
+
+    usuario_base = re.sub(r"[#|/\\\\]", "", nome_google).strip() or email.split("@")[0]
+    usuario_base = usuario_base[:32] or "usuario"
+    usuario_final = usuario_base
+    contador = 1
+    while conexao.execute("SELECT 1 FROM usuarios WHERE usuario = ? COLLATE NOCASE", (usuario_final,)).fetchone():
+        contador += 1
+        usuario_final = f"{usuario_base}{contador}"[:32]
+    id_publico = gerar_id_publico(conexao)
+    eh_primeira_conta = conexao.execute("SELECT COUNT(*) AS n FROM usuarios").fetchone()["n"] == 0
+    conexao.execute(
+        "INSERT INTO usuarios (usuario, senha_hash, id_publico, eh_admin, email, criado_em, ultima_atividade) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (usuario_final, generate_password_hash(uuid.uuid4().hex), id_publico, 1 if eh_primeira_conta else 0,
+         email, datetime.now().isoformat(), datetime.now().isoformat()),
+    )
+    conexao.commit()
+    conexao.close()
+    session["usuario"] = usuario_final
+    return jsonify({"ok": True})
 
 
 @app.route("/registrar", methods=["POST"])
