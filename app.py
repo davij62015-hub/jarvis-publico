@@ -22,12 +22,11 @@ import io
 import re
 import json
 import uuid
-import base64
 import secrets
 import sqlite3
 from datetime import datetime, timedelta
 
-from flask import Flask, request, jsonify, session, redirect, url_for, Response
+from flask import Flask, request, jsonify, session, redirect, url_for
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 
@@ -44,33 +43,9 @@ os.makedirs(PASTA_UPLOADS, exist_ok=True)
 
 AVATAR_PADRAO = "https://api.dicebear.com/7.x/identicon/svg?seed="
 NOME_APP = "New GG AI"
-
-# Logo padrao do site (SVG proprio, sem nada com direitos de terceiros).
-# Fica embutida direto no codigo para nunca depender do sistema de
-# arquivos: mesmo num banco zerado (primeira vez rodando, ou depois de
-# um redeploy que apague o disco), o site sempre tem uma logo pra
-# mostrar. Se o administrador trocar a logo pelo painel, a nova fica
-# guardada dentro do banco de dados (tabela "imagens"), entao ela
-# sobrevive a reinicios/redeploys desde que o arquivo do banco continue
-# no mesmo lugar.
-LOGO_PADRAO_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">
-  <defs>
-    <linearGradient id="fundoLogo" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#5865f2"/>
-      <stop offset="100%" stop-color="#8b5cf6"/>
-    </linearGradient>
-    <linearGradient id="brilhoFaisca" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#ffffff"/>
-      <stop offset="100%" stop-color="#d9e0ff"/>
-    </linearGradient>
-  </defs>
-  <rect x="4" y="4" width="192" height="192" rx="46" fill="url(#fundoLogo)"/>
-  <rect x="4" y="4" width="192" height="192" rx="46" fill="#ffffff" opacity="0.05"/>
-  <text x="100" y="123" font-family="Rubik, Segoe UI, Arial, sans-serif" font-weight="700"
-        font-size="86" fill="#ffffff" text-anchor="middle" letter-spacing="-4">GG</text>
-  <path d="M154 34 L162 54 L182 62 L162 70 L154 90 L146 70 L126 62 L146 54 Z" fill="url(#brilhoFaisca)"/>
-  <circle cx="160" cy="146" r="7" fill="url(#brilhoFaisca)" opacity="0.9"/>
-</svg>"""
+# Dono/admin permanente do site - independe de quem criou a conta primeiro.
+# Se o seu apelido de login for outro, troque so essa linha.
+CONTA_DONO = "SAMUCA"
 
 MINUTOS_CONSIDERADO_ONLINE = 3
 SEGUNDOS_DIGITANDO_VALE = 6
@@ -114,45 +89,6 @@ def _bloquear_listagem_uploads():
     return "Acesso negado.", 403
 
 
-@app.route("/imagem/<int:imagem_id>")
-def servir_imagem(imagem_id):
-    """Serve uma imagem guardada dentro do banco de dados (avatar, icone de
-    servidor, banner, logo trocada pelo admin etc)."""
-    conexao = obter_bd()
-    linha = conexao.execute("SELECT dados, mime FROM imagens WHERE id = ?", (imagem_id,)).fetchone()
-    conexao.close()
-    if not linha:
-        return "", 404
-    conteudo = base64.b64decode(linha["dados"])
-    resposta = Response(conteudo, mimetype=linha["mime"])
-    resposta.headers["Cache-Control"] = "public, max-age=31536000, immutable"
-    return resposta
-
-
-@app.route("/logo.svg")
-def servir_logo():
-    """Serve a logo atual do site. Se o administrador ja trocou a logo pelo
-    painel, ela vem do banco de dados; caso contrario, usa a logo padrao
-    (embutida no proprio codigo, entao sempre existe uma logo pra mostrar,
-    mesmo num banco zerado)."""
-    conexao = obter_bd()
-    config = conexao.execute("SELECT logo_imagem_id FROM configuracao_app WHERE id = 1").fetchone()
-    imagem_id = config["logo_imagem_id"] if config else None
-    if imagem_id:
-        linha = conexao.execute("SELECT dados, mime FROM imagens WHERE id = ?", (imagem_id,)).fetchone()
-        conexao.close()
-        if linha:
-            conteudo = base64.b64decode(linha["dados"])
-            resposta = Response(conteudo, mimetype=linha["mime"])
-            resposta.headers["Cache-Control"] = "public, max-age=300"
-            return resposta
-    else:
-        conexao.close()
-    resposta = Response(LOGO_PADRAO_SVG, mimetype="image/svg+xml")
-    resposta.headers["Cache-Control"] = "public, max-age=300"
-    return resposta
-
-
 # =====================================================================
 # Banco de dados
 # =====================================================================
@@ -178,7 +114,6 @@ def iniciar_bd():
         CREATE TABLE IF NOT EXISTS usuarios (
             usuario TEXT PRIMARY KEY,
             senha_hash TEXT NOT NULL,
-            email TEXT,
             id_publico INTEGER UNIQUE,
             avatar TEXT,
             banner TEXT,
@@ -187,8 +122,6 @@ def iniciar_bd():
             eh_admin INTEGER DEFAULT 0,
             premium INTEGER DEFAULT 0,
             banido INTEGER DEFAULT 0,
-            permanente INTEGER DEFAULT 0,
-            expira_em TEXT,
             criado_em TEXT NOT NULL,
             ultima_atividade TEXT
         )
@@ -196,39 +129,8 @@ def iniciar_bd():
     for coluna, definicao in [
         ("banner", "TEXT"), ("bio", "TEXT"), ("eh_admin", "INTEGER DEFAULT 0"),
         ("premium", "INTEGER DEFAULT 0"), ("banido", "INTEGER DEFAULT 0"),
-        ("email", "TEXT"), ("permanente", "INTEGER DEFAULT 0"), ("expira_em", "TEXT"),
     ]:
         _adicionar_coluna_se_faltar(conexao, "usuarios", coluna, definicao)
-
-    # Imagens (avatares, icones/banners de servidor, logo do site, emoji
-    # customizado etc) ficam guardadas AQUI DENTRO do banco de dados, e nao
-    # como arquivos soltos na pasta static/uploads. Isso e de proposito:
-    # em servicos como o Render, o disco do servidor (fora de um "disco
-    # persistente" pago) e apagado toda vez que a aplicacao reinicia ou e
-    # reimplantada - entao qualquer imagem salva so como arquivo se perderia.
-    # Guardando o proprio conteudo da imagem numa tabela do banco, a imagem
-    # sobrevive junto com o resto dos dados do app (contas, mensagens etc),
-    # que ja precisam estar num lugar que persista de qualquer forma.
-    conexao.execute("""
-        CREATE TABLE IF NOT EXISTS imagens (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            dados TEXT NOT NULL,
-            mime TEXT NOT NULL,
-            enviado_por TEXT,
-            criado_em TEXT NOT NULL
-        )
-    """)
-
-    # Configuracoes gerais do site (por enquanto, so guarda qual imagem
-    # (da tabela acima) e a logo atual do app). E uma unica linha fixa
-    # (id = 1) que funciona como "configuracao global".
-    conexao.execute("""
-        CREATE TABLE IF NOT EXISTS configuracao_app (
-            id INTEGER PRIMARY KEY CHECK (id = 1),
-            logo_imagem_id INTEGER
-        )
-    """)
-    conexao.execute("INSERT OR IGNORE INTO configuracao_app (id, logo_imagem_id) VALUES (1, NULL)")
 
     conexao.execute("""
         CREATE TABLE IF NOT EXISTS amizades (
@@ -466,18 +368,25 @@ def iniciar_bd():
     conexao.commit()
 
     # Garante que sempre exista pelo menos um administrador: se ninguem
-    # for admin ainda, a conta mais antiga vira administradora (e fica
-    # permanente, para nunca expirar e sempre existir um jeito de acessar
-    # o painel do administrador).
+    # for admin ainda, a conta mais antiga vira administradora.
     tem_admin = conexao.execute("SELECT 1 FROM usuarios WHERE eh_admin = 1").fetchone()
     if not tem_admin:
         mais_antigo = conexao.execute("SELECT usuario FROM usuarios ORDER BY criado_em ASC LIMIT 1").fetchone()
         if mais_antigo:
-            conexao.execute(
-                "UPDATE usuarios SET eh_admin = 1, permanente = 1, expira_em = NULL WHERE usuario = ?",
-                (mais_antigo["usuario"],),
-            )
+            conexao.execute("UPDATE usuarios SET eh_admin = 1 WHERE usuario = ?", (mais_antigo["usuario"],))
             conexao.commit()
+
+    # A conta do dono (CONTA_DONO) e sempre admin e sempre fica com o ID 1,
+    # nao importa quando foi criada nem se alguem mais era admin antes.
+    conta_dono = conexao.execute("SELECT usuario, id_publico FROM usuarios WHERE usuario = ? COLLATE NOCASE", (CONTA_DONO,)).fetchone()
+    if conta_dono:
+        conexao.execute("UPDATE usuarios SET eh_admin = 1 WHERE usuario = ? COLLATE NOCASE", (CONTA_DONO,))
+        if conta_dono["id_publico"] != 1:
+            outro_com_id_1 = conexao.execute("SELECT usuario FROM usuarios WHERE id_publico = 1 AND usuario != ? COLLATE NOCASE", (CONTA_DONO,)).fetchone()
+            if outro_com_id_1:
+                conexao.execute("UPDATE usuarios SET id_publico = ? WHERE usuario = ?", (gerar_id_publico(conexao), outro_com_id_1["usuario"]))
+            conexao.execute("UPDATE usuarios SET id_publico = 1 WHERE usuario = ? COLLATE NOCASE", (CONTA_DONO,))
+        conexao.commit()
 
     conexao.close()
 
@@ -497,7 +406,7 @@ def usuario_logado():
 
 def exigir_login():
     """Retorna None se puder seguir, ou uma resposta de erro caso contrario
-    (sessao invalida, conta banida ou conta que ja expirou apos 24h)."""
+    (sessao invalida ou conta banida)."""
     nome = usuario_logado()
     if not nome:
         return jsonify({"ok": False, "erro": "Sessao expirada, entre novamente."}), 401
@@ -508,9 +417,6 @@ def exigir_login():
     if linha["banido"]:
         session.pop("usuario", None)
         return jsonify({"ok": False, "erro": "Sua conta foi banida.", "banido": True}), 403
-    if conta_expirada(linha):
-        session.pop("usuario", None)
-        return jsonify({"ok": False, "erro": "Sua conta expirou (contas duram 24 horas, a menos que um administrador torne ela permanente).", "expirada": True}), 401
     return None
 
 
@@ -554,6 +460,8 @@ def avatar_de(usuario_ou_linha):
 
 
 def eh_admin(usuario):
+    if usuario and usuario.strip().lower() == CONTA_DONO.lower():
+        return True
     linha = buscar_usuario(usuario)
     return bool(linha and linha["eh_admin"])
 
@@ -561,36 +469,6 @@ def eh_admin(usuario):
 def eh_premium(usuario):
     linha = buscar_usuario(usuario)
     return bool(linha and (linha["premium"] or linha["eh_admin"]))
-
-
-def conta_expirada(linha):
-    """Contas normais duram 24h a partir da criacao. Contas permanentes
-    (marcadas assim pelo administrador) ou contas de administrador nunca
-    expiram."""
-    if not linha:
-        return False
-    if linha["permanente"] or linha["eh_admin"]:
-        return False
-    expira_em = linha["expira_em"]
-    if not expira_em:
-        return False
-    try:
-        limite = datetime.fromisoformat(expira_em)
-    except ValueError:
-        return False
-    return datetime.now() >= limite
-
-
-def segundos_restantes_conta(linha):
-    """Quantos segundos faltam ate a conta expirar (0 se ja expirou, None se nunca expira)."""
-    if not linha or linha["permanente"] or linha["eh_admin"] or not linha["expira_em"]:
-        return None
-    try:
-        limite = datetime.fromisoformat(linha["expira_em"])
-    except ValueError:
-        return None
-    restante = (limite - datetime.now()).total_seconds()
-    return max(0, int(restante))
 
 
 def marcar_atividade(usuario):
@@ -630,36 +508,17 @@ def id_conversa_dm(usuario_a, usuario_b):
     return "|".join(sorted([usuario_a.lower(), usuario_b.lower()]))
 
 
-_MIME_POR_EXTENSAO = {
-    ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
-    ".gif": "image/gif", ".webp": "image/webp", ".svg": "image/svg+xml",
-}
-
-
-def salvar_imagem_enviada(arquivo, enviado_por=None):
-    """Salva o CONTEUDO da imagem dentro do banco de dados (tabela
-    'imagens') e devolve a URL (/imagem/<id>) que serve essa imagem.
-    Isso e o que faz avatares, icones de servidor, banners etc sobreviverem
-    a um reinicio/redeploy do servidor, mesmo em hospedagens (como o
-    Render no plano gratuito) que apagam o disco local a cada reinicio -
-    o unico jeito de a imagem sumir e o proprio arquivo do banco sumir."""
+def salvar_imagem_enviada(arquivo):
     if not arquivo or not arquivo.filename:
         return None
     extensao = os.path.splitext(arquivo.filename)[1].lower()
-    mime = _MIME_POR_EXTENSAO.get(extensao, arquivo.mimetype or "image/png")
-    conteudo = arquivo.read()
-    if not conteudo:
-        return None
-    dados_base64 = base64.b64encode(conteudo).decode("ascii")
-    conexao = obter_bd()
-    cursor = conexao.execute(
-        "INSERT INTO imagens (dados, mime, enviado_por, criado_em) VALUES (?, ?, ?, ?)",
-        (dados_base64, mime, enviado_por, datetime.now().isoformat()),
-    )
-    imagem_id = cursor.lastrowid
-    conexao.commit()
-    conexao.close()
-    return f"/imagem/{imagem_id}"
+    if extensao not in (".png", ".jpg", ".jpeg", ".gif", ".webp"):
+        extensao = ".png"
+    nome_seguro = secure_filename(arquivo.filename) or "arquivo"
+    nome_unico = f"{uuid.uuid4().hex}_{nome_seguro}"
+    caminho = os.path.join(PASTA_UPLOADS, nome_unico)
+    arquivo.save(caminho)
+    return f"/static/uploads/{nome_unico}"
 
 
 def gerar_codigo_convite():
@@ -791,8 +650,8 @@ def pagina_html(titulo, corpo, estilos_extra="", scripts_extra=""):
 <title>{titulo}</title>
 {FONTE_LINK}
 <link rel="manifest" href="/manifest.json">
-<link rel="icon" type="image/svg+xml" href="/logo.svg">
-<link rel="apple-touch-icon" href="/logo.svg">
+<link rel="icon" type="image/svg+xml" href="/static/logo.svg">
+<link rel="apple-touch-icon" href="/static/logo.svg">
 <meta name="theme-color" content="#1e1f22">
 <style>{ESTILO_BASE}
 body {{ font-family: 'Rubik', 'Segoe UI', sans-serif; }}
@@ -842,7 +701,7 @@ body { display:flex; align-items:center; justify-content:center; height:100vh;
 CORPO_LOGIN = """
 <div class="caixa-login">
   <div class="marca-login">
-    <div class="bolha-logo"><img src="/logo.svg" alt="New GG AI"></div>
+    <div class="bolha-logo"><img src="/static/logo.svg" alt="New GG AI"></div>
     <h1>New GG AI</h1>
     <p>Converse com seus amigos e servidores.</p>
   </div>
@@ -852,7 +711,7 @@ CORPO_LOGIN = """
   </div>
 
   <form id="formEntrar" onsubmit="return enviarEntrar(event)">
-    <div class="campo-login"><label>Apelido ou email</label><input type="text" id="loginUsuario" autocomplete="username" required></div>
+    <div class="campo-login"><label>Apelido</label><input type="text" id="loginUsuario" autocomplete="username" required></div>
     <div class="campo-login"><label>Senha</label><input type="password" id="loginSenha" autocomplete="current-password" required></div>
     <button class="botao-login" type="submit" id="botaoEntrar">Entrar</button>
     <div class="erro-login" id="erroEntrar"></div>
@@ -860,9 +719,8 @@ CORPO_LOGIN = """
 
   <form id="formCriar" style="display:none;" onsubmit="return enviarCriar(event)">
     <div class="campo-login"><label>Apelido</label><input type="text" id="criarUsuario" maxlength="32" required></div>
-    <div class="campo-login"><label>Email</label><input type="email" id="criarEmail" autocomplete="email" required></div>
     <div class="campo-login"><label>Senha</label><input type="password" id="criarSenha" minlength="4" required></div>
-    <div class="aviso-id">Voce recebe um ID numerico unico automaticamente (pode ser usado por outras pessoas para te adicionar). Contas gratuitas duram 24 horas - depois disso, so um administrador pode torna-la permanente. Nao existe nada pago aqui.</div>
+    <div class="aviso-id">Voce recebe um ID numerico unico automaticamente (pode ser usado por outras pessoas para te adicionar). Nao existe nada pago aqui - alguns recursos extras so podem ser liberados pelo administrador.</div>
     <button class="botao-login" type="submit" id="botaoCriar">Criar conta</button>
     <div class="erro-login" id="erroCriar"></div>
   </form>
@@ -900,7 +758,6 @@ async function enviarCriar(ev) {
     try {
         const r = await fetch('/registrar', { method:'POST', headers:{'Content-Type':'application/json'},
             body: JSON.stringify({ usuario: document.getElementById('criarUsuario').value.trim(),
-                                    email: document.getElementById('criarEmail').value.trim(),
                                     senha: document.getElementById('criarSenha').value }) });
         const d = await r.json();
         if (d.ok) { window.location.href = '/app'; }
@@ -913,12 +770,21 @@ async function enviarCriar(ev) {
 """
 
 PAGINA_BANIDO = """
-<div style="height:100vh; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:24px;">
-  <div style="font-size:48px; margin-bottom:16px;">&#128683;</div>
-  <h2 style="color:#fff; margin-bottom:10px;">Sua conta foi banida</h2>
-  <p style="color:#949ba4; max-width:340px;">O administrador do New GG AI baniu esta conta. Se acha que foi um engano, procure quem administra o app.</p>
-  <a href="/sair" style="margin-top:18px; color:#00a8fc;">Sair</a>
+<div style="height:100vh; display:flex; align-items:center; justify-content:center; background:radial-gradient(circle at 50% 20%, #2b2d31 0%, #1e1f22 60%); padding:20px;">
+  <div style="width:100%; max-width:380px; background:#313338; border-radius:12px; padding:36px 28px; text-align:center;
+              box-shadow:0 20px 60px #00000066; animation:apareceBanido .35s ease;">
+    <div style="width:76px; height:76px; border-radius:50%; background:#da373c22; border:2px solid #da373c55;
+                display:flex; align-items:center; justify-content:center; font-size:34px; margin:0 auto 20px;">&#128683;</div>
+    <h2 style="color:#fff; font-size:20px; font-weight:700; margin-bottom:10px;">Sua conta foi banida</h2>
+    <p style="color:#949ba4; font-size:14px; line-height:1.5; margin-bottom:26px;">
+      O administrador do New GG AI restringiu o acesso desta conta. Se voce acha que foi um engano, fale com quem administra o app.
+    </p>
+    <a href="/sair" style="display:block; width:100%; padding:12px; border-radius:4px; background:#5865f2; color:#fff;
+              font-weight:600; font-size:14px; box-sizing:border-box; transition:background .15s ease;"
+       onmouseover="this.style.background='#4752c4'" onmouseout="this.style.background='#5865f2'">Sair da conta</a>
+  </div>
 </div>
+<style>@keyframes apareceBanido { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:translateY(0); } }</style>
 """
 
 
@@ -936,73 +802,42 @@ def raiz():
 def registrar():
     dados = request.get_json() or {}
     usuario = (dados.get("usuario") or "").strip()
-    email = (dados.get("email") or "").strip().lower()
     senha = dados.get("senha") or ""
     if not usuario or len(usuario) < 2:
         return jsonify({"ok": False, "erro": "Escolha um apelido com pelo menos 2 caracteres."})
     if any(c in usuario for c in "#|/\\"):
         return jsonify({"ok": False, "erro": "O apelido nao pode conter #, / ou \\."})
-    if "@" not in email or "." not in email.split("@")[-1] or len(email) < 6:
-        return jsonify({"ok": False, "erro": "Digite um email valido."})
     if len(senha) < 4:
         return jsonify({"ok": False, "erro": "A senha precisa ter pelo menos 4 caracteres."})
     conexao = obter_bd()
-    existe_usuario = conexao.execute("SELECT 1 FROM usuarios WHERE usuario = ? COLLATE NOCASE", (usuario,)).fetchone()
-    if existe_usuario:
+    existe = conexao.execute("SELECT 1 FROM usuarios WHERE usuario = ? COLLATE NOCASE", (usuario,)).fetchone()
+    if existe:
         conexao.close()
         return jsonify({"ok": False, "erro": "Esse apelido ja esta em uso."})
-    existe_email = conexao.execute("SELECT 1 FROM usuarios WHERE email = ? COLLATE NOCASE", (email,)).fetchone()
-    if existe_email:
-        conexao.close()
-        return jsonify({"ok": False, "erro": "Ja existe uma conta com esse email."})
-
     id_publico = gerar_id_publico(conexao)
-
-    # Garante que sempre exista pelo menos um administrador: se ainda nao
-    # existe NINGUEM marcado como admin no banco (nao so "e a primeira
-    # conta"), esta conta vira admin e fica permanente (nunca expira).
-    ja_existe_algum_admin = conexao.execute("SELECT 1 FROM usuarios WHERE eh_admin = 1").fetchone() is not None
-    vai_ser_admin = not ja_existe_algum_admin
-
-    agora = datetime.now()
-    if vai_ser_admin:
-        permanente = 1
-        expira_em = None
-    else:
-        # Contas normais duram 24 horas. Um administrador pode tornar
-        # qualquer conta permanente pelo painel de administrador.
-        permanente = 0
-        expira_em = (agora + timedelta(hours=24)).isoformat()
-
+    eh_primeira_conta = conexao.execute("SELECT COUNT(*) AS n FROM usuarios").fetchone()["n"] == 0
     conexao.execute(
-        "INSERT INTO usuarios (usuario, senha_hash, email, id_publico, eh_admin, permanente, expira_em, "
-        "criado_em, ultima_atividade) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (usuario, generate_password_hash(senha), email, id_publico, 1 if vai_ser_admin else 0,
-         permanente, expira_em, agora.isoformat(), agora.isoformat()),
+        "INSERT INTO usuarios (usuario, senha_hash, id_publico, eh_admin, criado_em, ultima_atividade) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (usuario, generate_password_hash(senha), id_publico, 1 if eh_primeira_conta else 0,
+         datetime.now().isoformat(), datetime.now().isoformat()),
     )
     conexao.commit()
     conexao.close()
     session["usuario"] = usuario
-    return jsonify({"ok": True, "eh_admin": vai_ser_admin})
+    return jsonify({"ok": True})
 
 
 @app.route("/entrar", methods=["POST"])
 def entrar():
     dados = request.get_json() or {}
-    identificador = (dados.get("usuario") or "").strip()
+    usuario = (dados.get("usuario") or "").strip()
     senha = dados.get("senha") or ""
-    if "@" in identificador:
-        conexao = obter_bd()
-        linha = conexao.execute("SELECT * FROM usuarios WHERE email = ? COLLATE NOCASE", (identificador,)).fetchone()
-        conexao.close()
-    else:
-        linha = buscar_usuario(identificador)
+    linha = buscar_usuario(usuario)
     if not linha or not check_password_hash(linha["senha_hash"], senha):
-        return jsonify({"ok": False, "erro": "Apelido/email ou senha incorretos."})
+        return jsonify({"ok": False, "erro": "Apelido ou senha incorretos."})
     if linha["banido"]:
-        return jsonify({"ok": False, "erro": "Sua conta foi banida pelo administrador."})
-    if conta_expirada(linha):
-        return jsonify({"ok": False, "erro": "Essa conta expirou (contas gratuitas duram 24 horas, a menos que um administrador torne ela permanente)."})
+        return jsonify({"ok": False, "erro": "Sua conta foi banida."})
     session["usuario"] = linha["usuario"]
     marcar_atividade(linha["usuario"])
     return jsonify({"ok": True})
@@ -1020,9 +855,9 @@ def manifest():
         "name": NOME_APP, "short_name": NOME_APP, "start_url": "/app", "display": "standalone",
         "background_color": "#1e1f22", "theme_color": "#1e1f22",
         "icons": [
-            {"src": "/logo.svg", "sizes": "192x192", "type": "image/svg+xml", "purpose": "any"},
-            {"src": "/logo.svg", "sizes": "512x512", "type": "image/svg+xml", "purpose": "any"},
-            {"src": "/logo.svg", "sizes": "512x512", "type": "image/svg+xml", "purpose": "maskable"},
+            {"src": "/static/logo.svg", "sizes": "192x192", "type": "image/svg+xml", "purpose": "any"},
+            {"src": "/static/logo.svg", "sizes": "512x512", "type": "image/svg+xml", "purpose": "any"},
+            {"src": "/static/logo.svg", "sizes": "512x512", "type": "image/svg+xml", "purpose": "maskable"},
         ],
     })
 
@@ -1553,7 +1388,6 @@ CORPO_APP_SHELL = """
     <div class="abas-modal-topo">
       <button class="ativa" onclick="mudarAbaAdmin('usuarios', this)">Usuarios</button>
       <button onclick="mudarAbaAdmin('servidores', this)">Servidores</button>
-      <button onclick="mudarAbaAdmin('aparencia', this)">Aparencia</button>
     </div>
     <div class="corpo-modal">
       <div class="secao-modal-tab ativa" id="tabAdminUsuarios">
@@ -1563,19 +1397,6 @@ CORPO_APP_SHELL = """
       <div class="secao-modal-tab" id="tabAdminServidores">
         <div class="campo-busca-modal"><input type="text" id="buscaAdminServidores" placeholder="Buscar por nome..." oninput="renderizarAdminServidores()"></div>
         <div id="listaAdminServidores"></div>
-      </div>
-      <div class="secao-modal-tab" id="tabAdminAparencia">
-        <label>Logo do site</label>
-        <div style="display:flex; align-items:center; gap:16px; margin-bottom:16px;">
-          <img src="/logo.svg" style="width:64px; height:64px; border-radius:16px;" id="previaLogoAtual">
-          <div style="flex:1;">
-            <input type="file" id="arquivoNovaLogo" accept="image/*,.svg">
-            <div class="mensagem-modal" id="msgLogoAdmin"></div>
-          </div>
-        </div>
-        <button class="botao-primario-modal" onclick="trocarLogoAdmin()">Salvar nova logo</button>
-        <button class="botao-primario-modal" style="background:#404249; margin-top:8px;" onclick="restaurarLogoAdmin()">Restaurar logo padrao</button>
-        <div class="aviso-id" style="margin-top:14px;">A logo (e qualquer outra imagem enviada no app, como avatares e icones de servidor) fica guardada dentro do banco de dados, entao ela nao some quando o servidor reinicia ou e reimplantado - so some se o proprio arquivo do banco de dados for apagado.</div>
       </div>
     </div>
     <div class="linha-botoes-modal"><button class="cancelar-modal" onclick="fecharModal('modalAdmin')">Fechar</button></div>
@@ -1974,7 +1795,7 @@ async function montarAreaPrincipal() {
     }
 
     topo.innerHTML = '';
-    corpo.innerHTML = `<div class="tela-boas-vindas"><div class="bolha-grande"><img src="/logo.svg" style="width:100%;height:100%;border-radius:50%;"></div><div>Escolha um amigo, servidor ou canal para comecar.</div></div>`;
+    corpo.innerHTML = `<div class="tela-boas-vindas"><div class="bolha-grande"><img src="/static/logo.svg" style="width:100%;height:100%;border-radius:50%;"></div><div>Escolha um amigo, servidor ou canal para comecar.</div></div>`;
 }
 
 async function abrirCanal(id, tipo, nome) {
@@ -2478,40 +2299,20 @@ function mudarAbaAdmin(nome, botao) {
     document.querySelectorAll('#modalAdmin .secao-modal-tab').forEach(s => s.classList.remove('ativa'));
     botao.classList.add('ativa');
     document.getElementById('tabAdmin' + nome.charAt(0).toUpperCase() + nome.slice(1)).classList.add('ativa');
-    if (nome === 'usuarios') renderizarAdminUsuarios();
-    else if (nome === 'servidores') renderizarAdminServidores();
-}
-function formatarTempoRestante(segundos) {
-    if (segundos === null || segundos === undefined) return null;
-    if (segundos <= 0) return 'expirada';
-    const horas = Math.floor(segundos / 3600);
-    const minutos = Math.floor((segundos % 3600) / 60);
-    return horas > 0 ? `expira em ${horas}h${minutos}m` : `expira em ${minutos}m`;
+    if (nome === 'usuarios') renderizarAdminUsuarios(); else renderizarAdminServidores();
 }
 async function renderizarAdminUsuarios() {
     const termo = (document.getElementById('buscaAdminUsuarios').value || '').toLowerCase();
     const r = await fetch('/api/admin/usuarios');
     const usuarios = await r.json();
     const filtrados = usuarios.filter(u => u.usuario.toLowerCase().includes(termo));
-    document.getElementById('listaAdminUsuarios').innerHTML = filtrados.map(u => {
-        const tempoRestante = formatarTempoRestante(u.segundos_restantes);
-        let statusTexto = u.eh_admin ? 'Administrador' : (u.online ? 'Online' : 'Offline');
-        if (tempoRestante) statusTexto += ' - conta temporaria, ' + tempoRestante;
-        else if (!u.eh_admin) statusTexto += ' - conta permanente';
-        const botaoPermanente = u.eh_admin ? '' :
-            `<button class="${u.permanente?'ativo-toggle':''}" onclick="alternarPermanenteUsuario('${escaparHtml(u.usuario)}', ${!u.permanente})">${u.permanente?'Conta permanente':'Tornar permanente'}</button>`;
-        return `<div class="linha-lista-modal">
+    document.getElementById('listaAdminUsuarios').innerHTML = filtrados.map(u => `
+        <div class="linha-lista-modal">
             <img src="${u.avatar}">
-            <div class="info-linha"><div class="nome-linha">${escaparHtml(u.usuario)} #${u.id_publico}</div><div class="sub-linha">${statusTexto}</div></div>
-            ${botaoPermanente}
+            <div class="info-linha"><div class="nome-linha">${escaparHtml(u.usuario)} #${u.id_publico}</div><div class="sub-linha">${u.eh_admin?'Administrador':(u.online?'Online':'Offline')}</div></div>
             <button class="${u.premium?'ativo-toggle':''}" onclick="alternarPremiumUsuario('${escaparHtml(u.usuario)}', ${!u.premium})">${u.premium?'Recurso liberado':'Liberar recurso extra'}</button>
             <button class="perigo-toggle" onclick="alternarBanUsuario('${escaparHtml(u.usuario)}', ${!u.banido})" ${u.eh_admin?'disabled':''}>${u.banido?'Desbanir':'Banir'}</button>
-        </div>`;
-    }).join('') || '<div class="vazio-lista-lateral">Nenhum usuario encontrado.</div>';
-}
-async function alternarPermanenteUsuario(usuario, tornarPermanente) {
-    await fetch('/api/admin/usuarios/permanente', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ alvo: usuario, permanente: tornarPermanente }) });
-    renderizarAdminUsuarios();
+        </div>`).join('') || '<div class="vazio-lista-lateral">Nenhum usuario encontrado.</div>';
 }
 async function alternarPremiumUsuario(usuario, conceder) {
     await fetch('/api/admin/usuarios/premium', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ alvo: usuario, conceder }) });
@@ -2548,31 +2349,6 @@ async function excluirServidorAdmin(id) {
     if (!confirm('Excluir este servidor (acao de administrador)?')) return;
     await fetch('/api/admin/servidores/' + id + '/excluir', { method:'POST' });
     renderizarAdminServidores(); carregarRailServidores();
-}
-async function trocarLogoAdmin() {
-    const arquivo = document.getElementById('arquivoNovaLogo').files[0];
-    const msg = document.getElementById('msgLogoAdmin');
-    if (!arquivo) { msg.className='mensagem-modal erro'; msg.textContent = 'Escolha uma imagem primeiro.'; return; }
-    msg.className = 'mensagem-modal'; msg.textContent = 'Enviando...';
-    const form = new FormData();
-    form.append('logo', arquivo);
-    const r = await fetch('/api/admin/logo', { method:'POST', body: form });
-    const d = await r.json();
-    if (d.ok) {
-        msg.textContent = 'Logo atualizada!';
-        const bust = '?t=' + Date.now();
-        document.getElementById('previaLogoAtual').src = '/logo.svg' + bust;
-        document.querySelectorAll('link[rel="icon"], link[rel="apple-touch-icon"]').forEach(l => l.href = '/logo.svg' + bust);
-    } else {
-        msg.className = 'mensagem-modal erro'; msg.textContent = d.erro || 'Nao foi possivel trocar a logo.';
-    }
-}
-async function restaurarLogoAdmin() {
-    if (!confirm('Voltar para a logo padrao do New GG AI?')) return;
-    await fetch('/api/admin/logo/restaurar', { method:'POST' });
-    const bust = '?t=' + Date.now();
-    document.getElementById('previaLogoAtual').src = '/logo.svg' + bust;
-    document.querySelectorAll('link[rel="icon"], link[rel="apple-touch-icon"]').forEach(l => l.href = '/logo.svg' + bust);
 }
 
 // ---------------------------------------------------------------
@@ -4578,10 +4354,9 @@ def api_admin_usuarios():
     linhas = conexao.execute("SELECT * FROM usuarios ORDER BY criado_em ASC").fetchall()
     conexao.close()
     return jsonify([{
-        "usuario": l["usuario"], "id_publico": l["id_publico"], "avatar": avatar_de(l), "email": l["email"],
+        "usuario": l["usuario"], "id_publico": l["id_publico"], "avatar": avatar_de(l),
         "premium": bool(l["premium"]), "eh_admin": bool(l["eh_admin"]), "banido": bool(l["banido"]),
-        "online": esta_online(l["ultima_atividade"]), "permanente": bool(l["permanente"]) or bool(l["eh_admin"]),
-        "segundos_restantes": segundos_restantes_conta(l),
+        "online": esta_online(l["ultima_atividade"]),
     } for l in linhas])
 
 
@@ -4604,39 +4379,6 @@ def api_admin_usuarios_premium():
     return jsonify({"ok": True})
 
 
-@app.route("/api/admin/usuarios/permanente", methods=["POST"])
-def api_admin_usuarios_permanente():
-    """Faz uma conta que expiraria em 24h nunca mais expirar (ou volta ao
-    normal, se o admin decidir desfazer). So o administrador pode fazer isso."""
-    erro = exigir_login()
-    if erro:
-        return erro
-    if not eh_admin(usuario_logado()):
-        return jsonify({"ok": False, "erro": "So administradores podem fazer isso."}), 403
-    dados = request.get_json() or {}
-    alvo = (dados.get("alvo") or "").strip()
-    tornar_permanente = bool(dados.get("permanente"))
-    linha = buscar_usuario(alvo)
-    if not linha:
-        return jsonify({"ok": False, "erro": "Usuario nao encontrado."})
-    conexao = obter_bd()
-    if tornar_permanente:
-        conexao.execute("UPDATE usuarios SET permanente = 1 WHERE usuario = ? COLLATE NOCASE", (alvo,))
-    else:
-        # volta a expirar 24h a partir de agora (nunca deixamos um admin virar temporario)
-        if linha["eh_admin"]:
-            conexao.close()
-            return jsonify({"ok": False, "erro": "Uma conta de administrador nao pode virar temporaria."})
-        nova_expiracao = (datetime.now() + timedelta(hours=24)).isoformat()
-        conexao.execute(
-            "UPDATE usuarios SET permanente = 0, expira_em = ? WHERE usuario = ? COLLATE NOCASE",
-            (nova_expiracao, alvo),
-        )
-    conexao.commit()
-    conexao.close()
-    return jsonify({"ok": True})
-
-
 @app.route("/api/admin/usuarios/banir", methods=["POST"])
 def api_admin_usuarios_banir():
     erro = exigir_login()
@@ -4654,46 +4396,6 @@ def api_admin_usuarios_banir():
         return jsonify({"ok": False, "erro": "Nao e possivel banir um administrador."})
     conexao = obter_bd()
     conexao.execute("UPDATE usuarios SET banido = ? WHERE usuario = ? COLLATE NOCASE", (1 if banir else 0, alvo))
-    conexao.commit()
-    conexao.close()
-    return jsonify({"ok": True})
-
-
-@app.route("/api/admin/logo", methods=["POST"])
-def api_admin_logo():
-    """Troca a logo do site inteiro. A imagem enviada fica guardada dentro
-    do banco de dados (tabela 'imagens'), entao continua valendo mesmo
-    depois de reiniciar/reimplantar o servidor."""
-    erro = exigir_login()
-    if erro:
-        return erro
-    usuario = usuario_logado()
-    if not eh_admin(usuario):
-        return jsonify({"ok": False, "erro": "So administradores podem trocar a logo."}), 403
-    arquivo = request.files.get("logo")
-    if not arquivo or not arquivo.filename:
-        return jsonify({"ok": False, "erro": "Escolha uma imagem."})
-    url = salvar_imagem_enviada(arquivo, enviado_por=usuario)
-    if not url:
-        return jsonify({"ok": False, "erro": "Nao foi possivel ler essa imagem."})
-    imagem_id = int(url.rsplit("/", 1)[-1])
-    conexao = obter_bd()
-    conexao.execute("UPDATE configuracao_app SET logo_imagem_id = ? WHERE id = 1", (imagem_id,))
-    conexao.commit()
-    conexao.close()
-    return jsonify({"ok": True, "url": "/logo.svg"})
-
-
-@app.route("/api/admin/logo/restaurar", methods=["POST"])
-def api_admin_logo_restaurar():
-    """Volta a logo para a padrao do New GG AI (a que vem junto do codigo)."""
-    erro = exigir_login()
-    if erro:
-        return erro
-    if not eh_admin(usuario_logado()):
-        return jsonify({"ok": False, "erro": "So administradores podem fazer isso."}), 403
-    conexao = obter_bd()
-    conexao.execute("UPDATE configuracao_app SET logo_imagem_id = NULL WHERE id = 1")
     conexao.commit()
     conexao.close()
     return jsonify({"ok": True})
