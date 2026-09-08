@@ -712,7 +712,7 @@ body { display:flex; align-items:center; justify-content:center; height:100vh;
 CORPO_LOGIN = """
 <div class="caixa-login">
   <div class="marca-login">
-    <div class="bolha-logo"><img src="/static/logo.svg" alt="New GG AI"></div>
+    <div class="bolha-logo"><img src="/static/logo.png" alt="New GG AI"></div>
     <h1>New GG AI</h1>
     <p>Converse com seus amigos e servidores.</p>
   </div>
