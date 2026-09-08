@@ -1,6 +1,6 @@
 """
 =====================================================================
- New GG AI
+ NOVO GG
 =====================================================================
 Um unico aplicativo, em tela cheia, parecido com o Discord: amigos
 (adicionar por apelido ou por ID numerico), servidores, categorias,
@@ -44,7 +44,7 @@ PASTA_UPLOADS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static
 os.makedirs(PASTA_UPLOADS, exist_ok=True)
 
 AVATAR_PADRAO = "https://api.dicebear.com/7.x/identicon/svg?seed="
-NOME_APP = "New GG AI"
+NOME_APP = "NOVO GG"
 # Dono/admin permanente do site - independe de quem criou a conta primeiro.
 # Se o seu apelido de login for outro, troque so essa linha.
 CONTA_DONO = "SAMUCA"
@@ -712,8 +712,8 @@ body { display:flex; align-items:center; justify-content:center; height:100vh;
 CORPO_LOGIN = """
 <div class="caixa-login">
   <div class="marca-login">
-    <div class="bolha-logo"><img src="/static/logo.png" alt="New GG AI"></div>
-    <h1>New GG AI</h1>
+    <div class="bolha-logo"><img src="/static/logo.png" alt="NOVO GG"></div>
+    <h1>NOVO GG</h1>
     <p>Converse com seus amigos e servidores.</p>
   </div>
   {bloco_google}
@@ -801,7 +801,7 @@ PAGINA_BANIDO = """
                 display:flex; align-items:center; justify-content:center; font-size:34px; margin:0 auto 20px;">&#128683;</div>
     <h2 style="color:#fff; font-size:20px; font-weight:700; margin-bottom:10px;">Sua conta foi banida</h2>
     <p style="color:#949ba4; font-size:14px; line-height:1.5; margin-bottom:26px;">
-      O administrador do New GG AI restringiu o acesso desta conta. Se voce acha que foi um engano, fale com quem administra o app.
+      O administrador do NOVO GG restringiu o acesso desta conta. Se voce acha que foi um engano, fale com quem administra o app.
     </p>
     <a href="/sair" style="display:block; width:100%; padding:12px; border-radius:4px; background:#5865f2; color:#fff;
               font-weight:600; font-size:14px; box-sizing:border-box; transition:background .15s ease;"
@@ -1622,7 +1622,7 @@ async function abrirPerfilDe(usuario) {
             <div class="id-perfil-popover">#${p.id_publico} ${p.online ? '- Online' : ''}</div>
             <div class="tags-especiais-perfil">${tags.join('')}</div>
             ${p.bio ? '<div class="bio-perfil-popover">'+escaparHtml(p.bio)+'</div>' : ''}
-            <div class="desde-perfil-popover">Membro do New GG AI desde ${desde}</div>
+            <div class="desde-perfil-popover">Membro do NOVO GG desde ${desde}</div>
         </div>`;
     abrirModal('modalVerPerfil');
 }
@@ -2428,7 +2428,7 @@ async function alternarPremiumUsuario(usuario, conceder) {
     renderizarAdminUsuarios();
 }
 async function alternarBanUsuario(usuario, banir) {
-    if (banir && !confirm('Banir ' + usuario + ' do New GG AI inteiro?')) return;
+    if (banir && !confirm('Banir ' + usuario + ' do NOVO GG inteiro?')) return;
     await fetch('/api/admin/usuarios/banir', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ alvo: usuario, banir }) });
     renderizarAdminUsuarios();
 }
