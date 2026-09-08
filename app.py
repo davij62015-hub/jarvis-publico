@@ -632,6 +632,10 @@ iniciar_bd()
 # =====================================================================
 
 ESTILO_BASE = """
+.icon-badge { width:16px; height:16px; display:inline-block; vertical-align:-3px; object-fit:contain; }
+.icon-badge.small { width:14px; height:14px; }
+.icon-badge.large { width:34px; height:34px; vertical-align:middle; }
+
 * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
 html, body { height: 100%; overflow: hidden; background: #1e1f22; }
 body { color: #dbdee1; }
@@ -798,7 +802,7 @@ PAGINA_BANIDO = """
   <div style="width:100%; max-width:380px; background:#313338; border-radius:12px; padding:36px 28px; text-align:center;
               box-shadow:0 20px 60px #00000066; animation:apareceBanido .35s ease;">
     <div style="width:76px; height:76px; border-radius:50%; background:#da373c22; border:2px solid #da373c55;
-                display:flex; align-items:center; justify-content:center; font-size:34px; margin:0 auto 20px;">&#128683;</div>
+                display:flex; align-items:center; justify-content:center; font-size:34px; margin:0 auto 20px;"><img class="icon-badge large" src="/static/icons/ban.svg" alt="Banido"></div>
     <h2 style="color:#fff; font-size:20px; font-weight:700; margin-bottom:10px;">Sua conta foi banida</h2>
     <p style="color:#949ba4; font-size:14px; line-height:1.5; margin-bottom:26px;">
       O administrador do NOVO GG restringiu o acesso desta conta. Se voce acha que foi um engano, fale com quem administra o app.
@@ -1555,7 +1559,7 @@ async function carregarRailServidores() {
     html += `<div class="rail-item adicionar" style="color:#949ba4;" onclick="abrirDescoberta()" title="Descobrir servidores publicos">&#128506;</div>`;
     if (estado.souAdminGlobal) {
         html += '<div class="rail-separador"></div>';
-        html += `<div class="rail-item admin-icone" onclick="abrirPainelAdmin()" title="Painel do administrador">&#128737;</div>`;
+        html += `<div class="rail-item admin-icone" onclick="abrirPainelAdmin()" title="Painel do administrador"><img class="icon-badge large" src="/static/icons/admin.svg" alt="Administrador"></div>`;
     }
     rail.innerHTML = html;
 }
@@ -1575,7 +1579,7 @@ async function carregarRodapeUsuario() {
     div.innerHTML = `
         <img src="${d.avatar}" onclick="abrirModalPerfil()">
         <div class="info-rodape" onclick="abrirModalPerfil()">
-            <div class="nome-rodape">${escaparHtml(d.usuario)}${d.premium?'<span class="selo-impulso-nome">&#10022;</span>':''}${d.eh_admin?'<span class="selo-admin-nome">&#128737;</span>':''}</div>
+            <div class="nome-rodape">${escaparHtml(d.usuario)}${d.premium?'<img class="icon-badge" src="/static/icons/nitro.svg" alt="Nitro" title="Nitro">':''}${d.eh_admin?'<img class="icon-badge" src="/static/icons/admin.svg" alt="Administrador" title="Administrador">':''}</div>
             <div class="id-rodape">#${d.id_publico}${d.status_texto ? ' - ' + escaparHtml(d.status_texto) : ''}</div>
         </div>
         <button class="botao-sair-rodape" onclick="window.location.href='/sair'" title="Sair">&#9211;</button>`;
@@ -1612,8 +1616,8 @@ async function abrirPerfilDe(usuario) {
     const p = await r.json();
     const desde = new Date(p.criado_em).toLocaleDateString('pt-BR', { day:'2-digit', month:'long', year:'numeric' });
     const tags = [];
-    if (p.premium) tags.push('<span class="tag-especial-perfil premium">&#10022; Recurso extra liberado</span>');
-    if (p.eh_admin) tags.push('<span class="tag-especial-perfil admin">&#128737; Administrador</span>');
+    if (p.premium) tags.push('<span class="tag-especial-perfil premium"><img class="icon-badge" src="/static/icons/nitro.svg" alt="Nitro"> Recurso extra liberado</span>');
+    if (p.eh_admin) tags.push('<span class="tag-especial-perfil admin"><img class="icon-badge" src="/static/icons/admin.svg" alt="Administrador"> Administrador</span>');
     document.getElementById('caixaVerPerfil').innerHTML = `
         <div class="perfil-banner" style="${p.banner ? 'background-image:url(\''+p.banner+'\')' : ''}"></div>
         <div class="perfil-avatar-wrap"><img src="${p.avatar}"></div>
@@ -1707,7 +1711,7 @@ async function montarColunaServidor(coluna) {
     const podeGerenciar = servidor.pode_gerenciar;
     coluna.innerHTML = `
       <div class="cabecalho-servidor-topo" onclick="alternarMenuServidor(event)">
-        ${escaparHtml(servidor.nome)} ${servidor.verificado?'<span class="selo-verificado-nome">&#9989;</span>':''} ${servidor.impulsionado?'<span class="selo-impulso-nome">&#10022;</span>':''}
+        ${escaparHtml(servidor.nome)} ${servidor.verificado?'<img class="icon-badge" src="/static/icons/verified.svg" alt="Verificado" title="Verificado">':''} ${servidor.impulsionado?'<img class="icon-badge" src="/static/icons/nitro.svg" alt="Nitro" title="Nitro">':''}
         <span class="seta-servidor">&#9662;</span>
         <div class="menu-flutuante-servidor" id="menuFlutuanteServidor">
           <div class="item-menu-flutuante" onclick="mostrarConvite()">&#128279; Convidar pessoas</div>
@@ -2227,7 +2231,7 @@ async function abrirDescoberta() {
     document.getElementById('listaDescoberta').innerHTML = servidores.map(s => `
         <div class="card-descoberta">
             <img src="${s.icone || ''}">
-            <div class="info-descoberta"><div class="nome-descoberta">${escaparHtml(s.nome)} ${s.verificado?'&#9989;':''}</div><div class="sub-descoberta">${s.membros} membros ${s.descricao ? '- ' + escaparHtml(s.descricao) : ''}</div></div>
+            <div class="info-descoberta"><div class="nome-descoberta">${escaparHtml(s.nome)} ${s.verificado?'<img class="icon-badge" src="/static/icons/verified.svg" alt="Verificado" title="Verificado">':''}</div><div class="sub-descoberta">${s.membros} membros ${s.descricao ? '- ' + escaparHtml(s.descricao) : ''}</div></div>
             <button class="botao-mini-circulo" style="width:auto; padding:0 12px; border-radius:6px;" onclick="entrarServidorPublico(${s.id})">Entrar</button>
         </div>`).join('') || '<div class="vazio-lista-lateral">Nenhum servidor publico no momento.</div>';
     abrirModal('modalDescobrir');
