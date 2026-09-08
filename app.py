@@ -1325,6 +1325,8 @@ CORPO_APP_SHELL = """
     <div class="corpo-modal">
       <label>Nome</label>
       <input type="text" id="editarNomeCanal" maxlength="40">
+      <label>Categoria</label>
+      <select id="editarCategoriaCanal"><option value="">Sem categoria</option></select>
       <label>Topico (mostrado no topo do canal)</label>
       <input type="text" id="editarTopicoCanal" maxlength="200">
       <label>Modo lento (segundos de espera entre mensagens, 0 = desligado)</label>
@@ -1743,7 +1745,8 @@ function renderizarCanais(categorias, canais, podeGerenciar) {
     const semCategoria = canais.filter(c => !c.categoria_id);
     semCategoria.forEach(c => { html += linhaCanal(c); });
     categorias.forEach(cat => {
-        html += `<div class="grupo-canais-titulo">${escaparHtml(cat.nome)} ${podeGerenciar ? '<span class="add-canal-btn" onclick="abrirModalCriarCanalComCategoria('+cat.id+')">+</span>' : ''}</div>`;
+        const iconesCategoria = podeGerenciar ? `<span class="add-canal-btn" title="Renomear categoria" onclick="renomearCategoria(${cat.id},'${escaparHtml(cat.nome)}')">&#9998;</span><span class="add-canal-btn" onclick="abrirModalCriarCanalComCategoria(${cat.id})">+</span>` : '';
+        html += `<div class="grupo-canais-titulo">${escaparHtml(cat.nome)} ${iconesCategoria}</div>`;
         canais.filter(c => c.categoria_id === cat.id).forEach(c => { html += linhaCanal(c); });
     });
     html += `<div class="grupo-canais-titulo">Sem categoria ${podeGerenciar ? '<span class="add-canal-btn" onclick="abrirModalCriarCanalComCategoria(null)">+</span>' : ''}</div>`;
@@ -1783,12 +1786,26 @@ async function criarCategoria() {
     document.getElementById('nomeCriarCategoria').value = '';
     fecharModal('modalCriarCategoria'); montarColunaLateral();
 }
+async function renomearCategoria(categoriaId, nomeAtual) {
+    const novoNome = prompt('Novo nome da categoria:', nomeAtual);
+    if (novoNome === null) return;
+    const nome = novoNome.trim();
+    if (!nome) return;
+    const r = await fetch('/api/categorias/' + categoriaId + '/editar', {
+        method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ nome }) });
+    const d = await r.json();
+    if (!d.ok) { alert(d.erro || 'Nao foi possivel renomear.'); return; }
+    montarColunaLateral();
+}
 let canalEmEdicaoId = null;
 function abrirEditarCanal(canalId) {
     const canal = (estado.detalheServidorCache.canais || []).find(c => c.id === canalId);
     if (!canal) return;
     canalEmEdicaoId = canalId;
     document.getElementById('editarNomeCanal').value = canal.nome;
+    const selectCategoria = document.getElementById('editarCategoriaCanal');
+    selectCategoria.innerHTML = '<option value="">Sem categoria</option>' + (estado.detalheServidorCache.categorias || []).map(c => `<option value="${c.id}">${escaparHtml(c.nome)}</option>`).join('');
+    selectCategoria.value = canal.categoria_id || '';
     document.getElementById('editarTopicoCanal').value = canal.topico || '';
     document.getElementById('editarSlowmodeCanal').value = canal.slowmode || 0;
     document.getElementById('msgEditarCanal').textContent = '';
@@ -1799,6 +1816,7 @@ async function salvarEdicaoCanal() {
     const r = await fetch('/api/canais/' + canalEmEdicaoId + '/editar', {
         method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({
             nome: document.getElementById('editarNomeCanal').value.trim(),
+            categoria_id: document.getElementById('editarCategoriaCanal').value || null,
             topico: document.getElementById('editarTopicoCanal').value.trim(),
             slowmode: parseInt(document.getElementById('editarSlowmodeCanal').value || '0', 10),
         }) });
@@ -3655,6 +3673,18 @@ def api_canais_editar(canal_id):
     conexao = obter_bd()
     if nome:
         conexao.execute("UPDATE canais SET nome = ? WHERE id = ?", (nome, canal_id))
+    if "categoria_id" in dados:
+        categoria_id_bruta = dados.get("categoria_id")
+        try:
+            categoria_id = int(categoria_id_bruta) if categoria_id_bruta not in (None, "") else None
+        except (TypeError, ValueError):
+            categoria_id = None
+        if categoria_id is not None:
+            # a categoria precisa ser do mesmo servidor, senao ignora silenciosamente
+            pertence = conexao.execute("SELECT 1 FROM categorias WHERE id = ? AND servidor_id = ?", (categoria_id, servidor_id)).fetchone()
+            if not pertence:
+                categoria_id = None
+        conexao.execute("UPDATE canais SET categoria_id = ? WHERE id = ?", (categoria_id, canal_id))
     conexao.execute("UPDATE canais SET topico = ?, slowmode = ? WHERE id = ?", (topico or None, slowmode, canal_id))
     conexao.commit()
     conexao.close()
@@ -3674,6 +3704,45 @@ def api_canais_excluir(canal_id):
     conexao.execute("DELETE FROM canais WHERE id = ?", (canal_id,))
     conexao.execute("DELETE FROM canal_mensagens WHERE canal_id = ?", (canal_id,))
     conexao.execute("DELETE FROM voz_presenca WHERE canal_id = ?", (canal_id,))
+    conexao.commit()
+    conexao.close()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/categorias/<int:categoria_id>/editar", methods=["POST"])
+def api_categorias_editar(categoria_id):
+    erro = exigir_login()
+    if erro:
+        return erro
+    usuario = usuario_logado()
+    conexao = obter_bd()
+    categoria = conexao.execute("SELECT * FROM categorias WHERE id = ?", (categoria_id,)).fetchone()
+    if not categoria or not pode_gerenciar_servidor(categoria["servidor_id"], usuario):
+        conexao.close()
+        return jsonify({"ok": False, "erro": "So o dono do servidor pode renomear categorias."}), 403
+    nome = ((request.get_json() or {}).get("nome") or "").strip()
+    if not nome:
+        conexao.close()
+        return jsonify({"ok": False, "erro": "Digite um nome."})
+    conexao.execute("UPDATE categorias SET nome = ? WHERE id = ?", (nome, categoria_id))
+    conexao.commit()
+    conexao.close()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/categorias/<int:categoria_id>/excluir", methods=["POST"])
+def api_categorias_excluir(categoria_id):
+    erro = exigir_login()
+    if erro:
+        return erro
+    usuario = usuario_logado()
+    conexao = obter_bd()
+    categoria = conexao.execute("SELECT * FROM categorias WHERE id = ?", (categoria_id,)).fetchone()
+    if not categoria or not pode_gerenciar_servidor(categoria["servidor_id"], usuario):
+        conexao.close()
+        return jsonify({"ok": False, "erro": "So o dono do servidor pode excluir categorias."}), 403
+    conexao.execute("UPDATE canais SET categoria_id = NULL WHERE categoria_id = ?", (categoria_id,))
+    conexao.execute("DELETE FROM categorias WHERE id = ?", (categoria_id,))
     conexao.commit()
     conexao.close()
     return jsonify({"ok": True})
