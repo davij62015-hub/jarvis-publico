@@ -2816,7 +2816,7 @@ def api_me():
     return jsonify({
         "usuario": linha["usuario"], "id_publico": linha["id_publico"], "avatar": avatar_de(linha),
         "status_texto": linha["status_texto"], "bio": linha["bio"], "banner": linha["banner"],
-        "premium": bool(linha["premium"]), "eh_admin": bool(linha["eh_admin"]),
+        "premium": eh_premium(linha["usuario"]), "eh_admin": bool(linha["eh_admin"]),
     })
 
 
