@@ -48,6 +48,9 @@ NOME_APP = "NOVO GG"
 # Dono/admin permanente do site - independe de quem criou a conta primeiro.
 # Se o seu apelido de login for outro, troque so essa linha.
 CONTA_DONO = "SAMUCA"
+# O dono do site sempre e reconhecido como admin por este email, nao importa
+# o apelido ou o #ID que a conta tiver (pode ser ID 2, 50, o que for).
+EMAIL_DONO = "samuelgomeswx2000@gmail.com"
 
 # Login com Google (opcional). Sem essa variavel configurada, o botao de
 # Google simplesmente nao aparece na tela de login e continua so
@@ -137,8 +140,14 @@ def iniciar_bd():
     for coluna, definicao in [
         ("banner", "TEXT"), ("bio", "TEXT"), ("eh_admin", "INTEGER DEFAULT 0"),
         ("premium", "INTEGER DEFAULT 0"), ("banido", "INTEGER DEFAULT 0"), ("email", "TEXT"),
+        ("tag", "TEXT"),
     ]:
         _adicionar_coluna_se_faltar(conexao, "usuarios", coluna, definicao)
+    conexao.execute("""
+        CREATE TABLE IF NOT EXISTS tags_globais (
+            nome TEXT PRIMARY KEY, cor TEXT NOT NULL DEFAULT '#5865f2', criado_em TEXT NOT NULL
+        )
+    """)
 
     conexao.execute("""
         CREATE TABLE IF NOT EXISTS amizades (
@@ -456,6 +465,15 @@ def buscar_usuario_por_nick_ou_id(valor):
     return buscar_usuario(valor)
 
 
+def cor_da_tag(nome_tag):
+    if not nome_tag:
+        return None
+    conexao = obter_bd()
+    linha = conexao.execute("SELECT cor FROM tags_globais WHERE nome = ?", (nome_tag,)).fetchone()
+    conexao.close()
+    return linha["cor"] if linha else "#5865f2"
+
+
 def avatar_de(usuario_ou_linha):
     if isinstance(usuario_ou_linha, sqlite3.Row):
         nome = usuario_ou_linha["usuario"]
@@ -471,6 +489,8 @@ def eh_admin(usuario):
     if usuario and usuario.strip().lower() == CONTA_DONO.lower():
         return True
     linha = buscar_usuario(usuario)
+    if linha and linha["email"] and linha["email"].strip().lower() == EMAIL_DONO.lower():
+        return True
     return bool(linha and linha["eh_admin"])
 
 
@@ -1145,6 +1165,9 @@ html, body { height:100%; overflow:hidden; }
 .caixa-modal .topo-modal h2 { color:#fff; font-size:20px; text-align:center; }
 .caixa-modal .topo-modal p { color:#949ba4; font-size:13px; text-align:center; margin-top:6px; }
 .caixa-modal .corpo-modal { padding:16px 16px 20px; }
+.previa-imagem-perfil { display:block; border-radius:8px; background:#1e1f22; object-fit:cover; margin:6px 0 10px; }
+.previa-imagem-perfil.previa-avatar { width:80px; height:80px; border-radius:50%; }
+.previa-imagem-perfil.previa-banner { width:100%; height:100px; }
 .caixa-modal label { display:block; font-size:12px; font-weight:700; color:#b5bac1; text-transform:uppercase; margin-bottom:8px; }
 .caixa-modal input[type=text], .caixa-modal input[type=number], .caixa-modal input[type=file], .caixa-modal textarea, .caixa-modal select {
                 width:100%; padding:10px 12px; border-radius:4px; border:none; background:#1e1f22; color:#dbdee1; font-size:14px; margin-bottom:16px; }
@@ -1210,6 +1233,9 @@ html, body { height:100%; overflow:hidden; }
 .tag-especial-perfil { font-size:10.5px; font-weight:700; padding:3px 8px; border-radius:10px; }
 .tag-especial-perfil.premium { background:#f47fff33; color:#f47fff; }
 .tag-especial-perfil.admin { background:#fee75c33; color:#fee75c; }
+.linha-criar-tag { display:flex; gap:8px; margin-bottom:12px; align-items:center; }
+.linha-criar-tag input[type=text] { flex:1; }
+.linha-criar-tag input[type=color] { width:44px; height:36px; padding:2px; border-radius:6px; border:none; cursor:pointer; }
 
 /* Chamada de voz/video em DM */
 .modal-chamada-dm { display:none; position:fixed; inset:0; background:#000000f2; z-index:210; align-items:center; justify-content:center;
@@ -1459,9 +1485,11 @@ CORPO_APP_SHELL = """
     <div class="topo-modal"><h2>Meu perfil</h2></div>
     <div class="corpo-modal">
       <label>Nova foto de perfil</label>
-      <input type="file" id="arquivoNovoAvatar" accept="image/*">
+      <img id="previaAvatarPerfil" class="previa-imagem-perfil previa-avatar" style="display:none;">
+      <input type="file" id="arquivoNovoAvatar" accept="image/*" onchange="atualizarPreviaImagem('arquivoNovoAvatar','previaAvatarPerfil')">
       <label id="rotuloBannerPerfil">Banner de perfil (recurso liberado pelo administrador)</label>
-      <input type="file" id="arquivoNovoBanner" accept="image/*">
+      <img id="previaBannerPerfil" class="previa-imagem-perfil previa-banner" style="display:none;">
+      <input type="file" id="arquivoNovoBanner" accept="image/*" onchange="atualizarPreviaImagem('arquivoNovoBanner','previaBannerPerfil')">
       <label>Status / recado</label>
       <input type="text" id="novoStatusTexto" maxlength="80" placeholder="Diga algo sobre voce">
       <label>Bio</label>
@@ -1485,6 +1513,7 @@ CORPO_APP_SHELL = """
     <div class="abas-modal-topo">
       <button class="ativa" onclick="mudarAbaAdmin('usuarios', this)">Usuarios</button>
       <button onclick="mudarAbaAdmin('servidores', this)">Servidores</button>
+      <button onclick="mudarAbaAdmin('tags', this)">Tags</button>
     </div>
     <div class="corpo-modal">
       <div class="secao-modal-tab ativa" id="tabAdminUsuarios">
@@ -1494,6 +1523,15 @@ CORPO_APP_SHELL = """
       <div class="secao-modal-tab" id="tabAdminServidores">
         <div class="campo-busca-modal"><input type="text" id="buscaAdminServidores" placeholder="Buscar por nome..." oninput="renderizarAdminServidores()"></div>
         <div id="listaAdminServidores"></div>
+      </div>
+      <div class="secao-modal-tab" id="tabAdminTags">
+        <div class="linha-criar-tag">
+          <input type="text" id="nomeNovaTag" placeholder="Nome da tag (ex: DEV, ADM)" maxlength="20">
+          <input type="color" id="corNovaTag" value="#5865f2">
+          <button class="botao-primario-modal" style="width:auto;padding:8px 14px;" onclick="criarTagGlobal()">Criar</button>
+        </div>
+        <div class="mensagem-modal" id="msgCriarTag"></div>
+        <div id="listaTagsGlobais"></div>
       </div>
     </div>
     <div class="linha-botoes-modal"><button class="cancelar-modal" onclick="fecharModal('modalAdmin')">Fechar</button></div>
@@ -1590,11 +1628,26 @@ function abrirModalPerfil() {
     document.getElementById('novoStatusTexto').value = meuPerfilCache.status_texto || '';
     document.getElementById('novaBioPerfil').value = meuPerfilCache.bio || '';
     document.getElementById('msgPerfil').textContent = '';
+    document.getElementById('arquivoNovoAvatar').value = '';
+    document.getElementById('arquivoNovoBanner').value = '';
+    const previaAvatar = document.getElementById('previaAvatarPerfil');
+    if (meuPerfilCache.avatar) { previaAvatar.src = meuPerfilCache.avatar; previaAvatar.style.display = 'block'; }
+    else { previaAvatar.style.display = 'none'; }
+    const previaBanner = document.getElementById('previaBannerPerfil');
+    if (meuPerfilCache.banner) { previaBanner.src = meuPerfilCache.banner; previaBanner.style.display = 'block'; }
+    else { previaBanner.style.display = 'none'; }
     const rotuloBanner = document.getElementById('rotuloBannerPerfil');
     const inputBanner = document.getElementById('arquivoNovoBanner');
     if (meuPerfilCache.premium) { rotuloBanner.textContent = 'Banner de perfil'; inputBanner.disabled = false; }
     else { rotuloBanner.textContent = 'Banner de perfil (peça para um administrador liberar este recurso pra voce)'; inputBanner.disabled = true; }
     abrirModal('modalPerfil');
+}
+function atualizarPreviaImagem(idInput, idPrevia) {
+    const arquivo = document.getElementById(idInput).files[0];
+    const previa = document.getElementById(idPrevia);
+    if (!arquivo) return;
+    previa.src = URL.createObjectURL(arquivo);
+    previa.style.display = 'block';
 }
 async function salvarPerfil() {
     const msg = document.getElementById('msgPerfil');
@@ -1618,6 +1671,7 @@ async function abrirPerfilDe(usuario) {
     const tags = [];
     if (p.premium) tags.push('<span class="tag-especial-perfil premium"><img class="icon-badge" src="/static/icons/nitro.svg" alt="Nitro"> Recurso extra liberado</span>');
     if (p.eh_admin) tags.push('<span class="tag-especial-perfil admin"><img class="icon-badge" src="/static/icons/admin.svg" alt="Administrador"> Administrador</span>');
+    if (p.tag) tags.push(`<span class="tag-especial-perfil" style="background:${p.tag_cor}33;color:${p.tag_cor}">${escaparHtml(p.tag)}</span>`);
     document.getElementById('caixaVerPerfil').innerHTML = `
         <div class="perfil-banner" style="${p.banner ? 'background-image:url(\''+p.banner+'\')' : ''}"></div>
         <div class="perfil-avatar-wrap"><img src="${p.avatar}"></div>
@@ -2412,20 +2466,58 @@ function mudarAbaAdmin(nome, botao) {
     document.querySelectorAll('#modalAdmin .secao-modal-tab').forEach(s => s.classList.remove('ativa'));
     botao.classList.add('ativa');
     document.getElementById('tabAdmin' + nome.charAt(0).toUpperCase() + nome.slice(1)).classList.add('ativa');
-    if (nome === 'usuarios') renderizarAdminUsuarios(); else renderizarAdminServidores();
+    if (nome === 'usuarios') renderizarAdminUsuarios();
+    else if (nome === 'servidores') renderizarAdminServidores();
+    else renderizarAdminTags();
+}
+let tagsGlobaisCache = [];
+async function renderizarAdminTags() {
+    const r = await fetch('/api/admin/tags');
+    tagsGlobaisCache = await r.json();
+    document.getElementById('listaTagsGlobais').innerHTML = tagsGlobaisCache.map(t => `
+        <div class="linha-lista-modal">
+            <span class="tag-especial-perfil" style="background:${t.cor}33;color:${t.cor}">${escaparHtml(t.nome)}</span>
+            <div class="info-linha"></div>
+            <button class="perigo-toggle" onclick="excluirTagGlobal('${escaparHtml(t.nome)}')">Excluir</button>
+        </div>`).join('') || '<div class="vazio-lista-lateral">Nenhuma tag criada ainda.</div>';
+    renderizarAdminUsuarios();
+}
+async function criarTagGlobal() {
+    const nome = document.getElementById('nomeNovaTag').value.trim();
+    const cor = document.getElementById('corNovaTag').value;
+    const msg = document.getElementById('msgCriarTag');
+    if (!nome) { msg.className='mensagem-modal erro'; msg.textContent = 'Digite um nome.'; return; }
+    const r = await fetch('/api/admin/tags/criar', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ nome, cor }) });
+    const d = await r.json();
+    if (!d.ok) { msg.className='mensagem-modal erro'; msg.textContent = d.erro || 'Erro.'; return; }
+    document.getElementById('nomeNovaTag').value = '';
+    msg.className='mensagem-modal'; msg.textContent = '';
+    renderizarAdminTags();
+}
+async function excluirTagGlobal(nome) {
+    if (!confirm('Excluir a tag ' + nome + '? Ela sai de todo mundo que tiver ela.')) return;
+    await fetch('/api/admin/tags/excluir', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ nome }) });
+    renderizarAdminTags();
 }
 async function renderizarAdminUsuarios() {
     const termo = (document.getElementById('buscaAdminUsuarios').value || '').toLowerCase();
     const r = await fetch('/api/admin/usuarios');
     const usuarios = await r.json();
+    if (!tagsGlobaisCache.length) tagsGlobaisCache = await (await fetch('/api/admin/tags')).json();
+    const opcoesTags = '<option value="">Sem tag</option>' + tagsGlobaisCache.map(t => `<option value="${escaparHtml(t.nome)}">${escaparHtml(t.nome)}</option>`).join('');
     const filtrados = usuarios.filter(u => u.usuario.toLowerCase().includes(termo));
     document.getElementById('listaAdminUsuarios').innerHTML = filtrados.map(u => `
         <div class="linha-lista-modal">
             <img src="${u.avatar}">
             <div class="info-linha"><div class="nome-linha">${escaparHtml(u.usuario)} #${u.id_publico}</div><div class="sub-linha">${u.eh_admin?'Administrador':(u.online?'Online':'Offline')}</div></div>
+            <select onchange="atribuirTagUsuario('${escaparHtml(u.usuario)}', this.value)">${opcoesTags.replace('value="'+(u.tag||'###')+'"', 'value="'+(u.tag||'###')+'" selected')}</select>
             <button class="${u.premium?'ativo-toggle':''}" onclick="alternarPremiumUsuario('${escaparHtml(u.usuario)}', ${!u.premium})">${u.premium?'Recurso liberado':'Liberar recurso extra'}</button>
             <button class="perigo-toggle" onclick="alternarBanUsuario('${escaparHtml(u.usuario)}', ${!u.banido})" ${u.eh_admin?'disabled':''}>${u.banido?'Desbanir':'Banir'}</button>
         </div>`).join('') || '<div class="vazio-lista-lateral">Nenhum usuario encontrado.</div>';
+}
+async function atribuirTagUsuario(usuario, tag) {
+    await fetch('/api/admin/usuarios/tag', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ alvo: usuario, tag }) });
+    renderizarAdminUsuarios();
 }
 async function alternarPremiumUsuario(usuario, conceder) {
     await fetch('/api/admin/usuarios/premium', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ alvo: usuario, conceder }) });
@@ -2838,7 +2930,8 @@ def api_me():
     return jsonify({
         "usuario": linha["usuario"], "id_publico": linha["id_publico"], "avatar": avatar_de(linha),
         "status_texto": linha["status_texto"], "bio": linha["bio"], "banner": linha["banner"],
-        "premium": eh_premium(linha["usuario"]), "eh_admin": bool(linha["eh_admin"]),
+        "premium": eh_premium(linha["usuario"]), "eh_admin": eh_admin(linha["usuario"]),
+        "tag": linha["tag"], "tag_cor": cor_da_tag(linha["tag"]),
     })
 
 
@@ -2868,8 +2961,9 @@ def api_usuario_perfil_completo(nome):
     return jsonify({
         "usuario": linha["usuario"], "id_publico": linha["id_publico"], "avatar": avatar_de(linha),
         "banner": linha["banner"], "bio": linha["bio"], "criado_em": linha["criado_em"],
-        "online": esta_online(linha["ultima_atividade"]), "premium": bool(linha["premium"] or linha["eh_admin"]),
-        "eh_admin": bool(linha["eh_admin"]),
+        "online": esta_online(linha["ultima_atividade"]), "premium": eh_premium(linha["usuario"]),
+        "eh_admin": eh_admin(linha["usuario"]),
+        "tag": linha["tag"], "tag_cor": cor_da_tag(linha["tag"]),
     })
 
 
@@ -2936,7 +3030,7 @@ def api_amigos_listar():
             continue
         resultado.append({
             "usuario": outro["usuario"], "id_publico": outro["id_publico"], "avatar": avatar_de(outro),
-            "online": esta_online(outro["ultima_atividade"]), "premium": bool(outro["premium"] or outro["eh_admin"]),
+            "online": esta_online(outro["ultima_atividade"]), "premium": eh_premium(outro["usuario"]),
         })
     conexao.close()
     resultado.sort(key=lambda x: (not x["online"], x["usuario"].lower()))
@@ -3353,7 +3447,8 @@ def api_servidores_detalhe(servidor_id):
             "usuario": m["usuario"], "apelido": apelidos.get(m["usuario"].lower()),
             "avatar": avatar_de(u) if u else AVATAR_PADRAO + m["usuario"],
             "online": esta_online(u["ultima_atividade"]) if u else False,
-            "premium": bool(u and (u["premium"] or u["eh_admin"])),
+            "premium": eh_premium(m["usuario"]),
+            "tag": u["tag"] if u else None, "tag_cor": cor_da_tag(u["tag"]) if u else None,
             "cargos": cargos_por_membro.get(m["usuario"].lower(), []),
         })
     return jsonify({
@@ -4519,8 +4614,8 @@ def api_admin_usuarios():
     conexao.close()
     return jsonify([{
         "usuario": l["usuario"], "id_publico": l["id_publico"], "avatar": avatar_de(l),
-        "premium": bool(l["premium"]), "eh_admin": bool(l["eh_admin"]), "banido": bool(l["banido"]),
-        "online": esta_online(l["ultima_atividade"]),
+        "premium": eh_premium(l["usuario"]), "eh_admin": eh_admin(l["usuario"]), "banido": bool(l["banido"]),
+        "online": esta_online(l["ultima_atividade"]), "tag": l["tag"],
     } for l in linhas])
 
 
@@ -4556,10 +4651,90 @@ def api_admin_usuarios_banir():
     linha = buscar_usuario(alvo)
     if not linha:
         return jsonify({"ok": False, "erro": "Usuario nao encontrado."})
-    if linha["eh_admin"] and banir:
+    if eh_admin(linha["usuario"]) and banir:
         return jsonify({"ok": False, "erro": "Nao e possivel banir um administrador."})
     conexao = obter_bd()
     conexao.execute("UPDATE usuarios SET banido = ? WHERE usuario = ? COLLATE NOCASE", (1 if banir else 0, alvo))
+    conexao.commit()
+    conexao.close()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/admin/tags")
+def api_admin_tags():
+    erro = exigir_login()
+    if erro:
+        return erro
+    if not eh_admin(usuario_logado()):
+        return jsonify([]), 403
+    conexao = obter_bd()
+    linhas = conexao.execute("SELECT * FROM tags_globais ORDER BY nome ASC").fetchall()
+    conexao.close()
+    return jsonify([{"nome": l["nome"], "cor": l["cor"]} for l in linhas])
+
+
+@app.route("/api/admin/tags/criar", methods=["POST"])
+def api_admin_tags_criar():
+    erro = exigir_login()
+    if erro:
+        return erro
+    if not eh_admin(usuario_logado()):
+        return jsonify({"ok": False, "erro": "So administradores podem fazer isso."}), 403
+    dados = request.get_json() or {}
+    nome = (dados.get("nome") or "").strip().upper()[:20]
+    cor = (dados.get("cor") or "#5865f2").strip()
+    if not nome:
+        return jsonify({"ok": False, "erro": "Digite um nome pra tag."})
+    if not re.match(r"^#[0-9a-fA-F]{6}$", cor):
+        cor = "#5865f2"
+    conexao = obter_bd()
+    conexao.execute(
+        "INSERT INTO tags_globais (nome, cor, criado_em) VALUES (?, ?, ?) ON CONFLICT(nome) DO UPDATE SET cor = excluded.cor",
+        (nome, cor, datetime.now().isoformat()),
+    )
+    conexao.commit()
+    conexao.close()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/admin/tags/excluir", methods=["POST"])
+def api_admin_tags_excluir():
+    erro = exigir_login()
+    if erro:
+        return erro
+    if not eh_admin(usuario_logado()):
+        return jsonify({"ok": False, "erro": "So administradores podem fazer isso."}), 403
+    nome = ((request.get_json() or {}).get("nome") or "").strip().upper()
+    conexao = obter_bd()
+    conexao.execute("DELETE FROM tags_globais WHERE nome = ?", (nome,))
+    conexao.execute("UPDATE usuarios SET tag = NULL WHERE tag = ?", (nome,))
+    conexao.commit()
+    conexao.close()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/admin/usuarios/tag", methods=["POST"])
+def api_admin_usuarios_tag():
+    """Da (ou tira) uma tag customizada de uma conta - ex: DEV, ADM, o que o
+    dono do site tiver criado. Nao tem nada a ver com o campo eh_admin/premium."""
+    erro = exigir_login()
+    if erro:
+        return erro
+    if not eh_admin(usuario_logado()):
+        return jsonify({"ok": False, "erro": "So administradores podem fazer isso."}), 403
+    dados = request.get_json() or {}
+    alvo = (dados.get("alvo") or "").strip()
+    tag = (dados.get("tag") or "").strip().upper() or None
+    if not buscar_usuario(alvo):
+        return jsonify({"ok": False, "erro": "Usuario nao encontrado."})
+    if tag:
+        conexao = obter_bd()
+        existe = conexao.execute("SELECT 1 FROM tags_globais WHERE nome = ?", (tag,)).fetchone()
+        conexao.close()
+        if not existe:
+            return jsonify({"ok": False, "erro": "Essa tag nao existe. Crie ela primeiro."})
+    conexao = obter_bd()
+    conexao.execute("UPDATE usuarios SET tag = ? WHERE usuario = ? COLLATE NOCASE", (tag, alvo))
     conexao.commit()
     conexao.close()
     return jsonify({"ok": True})
