@@ -26,6 +26,11 @@ import secrets
 import sqlite3
 import urllib.request
 import urllib.parse
+
+try:
+    from groq import Groq
+except Exception:
+    Groq = None
 from datetime import datetime, timedelta
 
 from flask import Flask, request, jsonify, session, redirect, url_for
@@ -39,8 +44,8 @@ from werkzeug.utils import secure_filename
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET", "troque-esta-chave-em-producao-new-gg-ai")
 
-CAMINHO_BD = os.environ.get("CAMINHO_BD", "newggai.db")
-PASTA_UPLOADS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", "uploads")
+CAMINHO_BD = os.environ.get("CAMINHO_BD", "/data/newggai.db" if os.path.isdir("/data") else "newggai.db")
+PASTA_UPLOADS = os.environ.get("PASTA_UPLOADS", os.path.join("/data", "newgg_uploads") if os.path.isdir("/data") else os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", "uploads"))
 os.makedirs(PASTA_UPLOADS, exist_ok=True)
 
 AVATAR_PADRAO = "https://api.dicebear.com/7.x/identicon/svg?seed="
@@ -62,6 +67,17 @@ MINUTOS_CONSIDERADO_ONLINE = 3
 SEGUNDOS_DIGITANDO_VALE = 6
 EMOJIS_SLOTS_NORMAL = 5
 EMOJIS_SLOTS_IMPULSIONADO = 25
+
+# IA do Novo GG. Configure GROQ_API_KEY no Render para ativar o Amigo IA.
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
+GROQ_MODEL = os.environ.get("GROQ_MODEL", "llama-3.1-8b-instant")
+IA_NOME = "Amigo IA"
+
+ALLOWED_MEDIA = {
+    "imagem": {".png", ".jpg", ".jpeg", ".gif", ".webp"},
+    "video": {".mp4", ".webm", ".mov", ".m4v"},
+    "audio": {".mp3", ".wav", ".ogg", ".m4a", ".webm"},
+}
 
 # Emojis de reacao (unicode simples, sem nada customizado/protegido)
 EMOJIS_REACAO = ["👍", "👎", "😂", "❤️", "😮", "😢", "🔥", "🎉", "👏", "😡"]
@@ -140,7 +156,7 @@ def iniciar_bd():
     for coluna, definicao in [
         ("banner", "TEXT"), ("bio", "TEXT"), ("eh_admin", "INTEGER DEFAULT 0"),
         ("premium", "INTEGER DEFAULT 0"), ("banido", "INTEGER DEFAULT 0"), ("email", "TEXT"),
-        ("tag", "TEXT"),
+        ("tag", "TEXT"), ("perfil_publico_autorizado", "INTEGER DEFAULT 0"), ("banido_ate", "TEXT"),
     ]:
         _adicionar_coluna_se_faltar(conexao, "usuarios", coluna, definicao)
     conexao.execute("""
@@ -202,7 +218,7 @@ def iniciar_bd():
     for coluna, definicao in [
         ("banner", "TEXT"), ("descricao", "TEXT"), ("cor_faixa", "TEXT DEFAULT '#5865f2'"),
         ("verificado", "INTEGER DEFAULT 0"), ("impulsionado", "INTEGER DEFAULT 0"),
-        ("publico", "INTEGER DEFAULT 0"),
+        ("publico", "INTEGER DEFAULT 0"), ("publico_autorizado", "INTEGER DEFAULT 0"),
     ]:
         _adicionar_coluna_se_faltar(conexao, "servidores", coluna, definicao)
 
@@ -393,16 +409,18 @@ def iniciar_bd():
             conexao.execute("UPDATE usuarios SET eh_admin = 1 WHERE usuario = ?", (mais_antigo["usuario"],))
             conexao.commit()
 
-    # A conta do dono (CONTA_DONO) e sempre admin e sempre fica com o ID 1,
-    # nao importa quando foi criada nem se alguem mais era admin antes.
-    conta_dono = conexao.execute("SELECT usuario, id_publico FROM usuarios WHERE usuario = ? COLLATE NOCASE", (CONTA_DONO,)).fetchone()
+    # O dono e identificado pelo email, nao pelo apelido. Assim, mesmo que
+    # entre por Google com outro nome, continua sendo admin e ID 1.
+    conta_dono = conexao.execute("SELECT usuario, id_publico FROM usuarios WHERE email = ? COLLATE NOCASE", (EMAIL_DONO,)).fetchone()
+    if not conta_dono:
+        conta_dono = conexao.execute("SELECT usuario, id_publico FROM usuarios WHERE usuario = ? COLLATE NOCASE", (CONTA_DONO,)).fetchone()
     if conta_dono:
-        conexao.execute("UPDATE usuarios SET eh_admin = 1 WHERE usuario = ? COLLATE NOCASE", (CONTA_DONO,))
+        conexao.execute("UPDATE usuarios SET eh_admin = 1, perfil_publico_autorizado = 1 WHERE usuario = ? COLLATE NOCASE", (conta_dono["usuario"],))
         if conta_dono["id_publico"] != 1:
-            outro_com_id_1 = conexao.execute("SELECT usuario FROM usuarios WHERE id_publico = 1 AND usuario != ? COLLATE NOCASE", (CONTA_DONO,)).fetchone()
+            outro_com_id_1 = conexao.execute("SELECT usuario FROM usuarios WHERE id_publico = 1 AND usuario != ? COLLATE NOCASE", (conta_dono["usuario"],)).fetchone()
             if outro_com_id_1:
                 conexao.execute("UPDATE usuarios SET id_publico = ? WHERE usuario = ?", (gerar_id_publico(conexao), outro_com_id_1["usuario"]))
-            conexao.execute("UPDATE usuarios SET id_publico = 1 WHERE usuario = ? COLLATE NOCASE", (CONTA_DONO,))
+            conexao.execute("UPDATE usuarios SET id_publico = 1 WHERE usuario = ? COLLATE NOCASE", (conta_dono["usuario"],))
         conexao.commit()
 
     conexao.close()
@@ -432,8 +450,16 @@ def exigir_login():
         session.pop("usuario", None)
         return jsonify({"ok": False, "erro": "Sessao invalida, entre novamente."}), 401
     if linha["banido"]:
+        ate = linha["banido_ate"] if "banido_ate" in linha.keys() else None
+        if ate:
+            try:
+                if datetime.fromisoformat(ate) <= datetime.now():
+                    conexao = obter_bd(); conexao.execute("UPDATE usuarios SET banido = 0, banido_ate = NULL WHERE usuario = ?", (linha["usuario"],)); conexao.commit(); conexao.close()
+                    return None
+            except ValueError:
+                pass
         session.pop("usuario", None)
-        return jsonify({"ok": False, "erro": "Sua conta foi banida.", "banido": True}), 403
+        return jsonify({"ok": False, "erro": "Sua conta esta temporariamente bloqueada." if ate else "Sua conta foi banida.", "banido": True, "banido_ate": ate}), 403
     return None
 
 
@@ -536,17 +562,31 @@ def id_conversa_dm(usuario_a, usuario_b):
     return "|".join(sorted([usuario_a.lower(), usuario_b.lower()]))
 
 
-def salvar_imagem_enviada(arquivo):
+def salvar_arquivo_enviado(arquivo, tipo="arquivo"):
     if not arquivo or not arquivo.filename:
         return None
     extensao = os.path.splitext(arquivo.filename)[1].lower()
-    if extensao not in (".png", ".jpg", ".jpeg", ".gif", ".webp"):
-        extensao = ".png"
+    permitidas = set().union(*ALLOWED_MEDIA.values())
+    if extensao not in permitidas:
+        return None
     nome_seguro = secure_filename(arquivo.filename) or "arquivo"
     nome_unico = f"{uuid.uuid4().hex}_{nome_seguro}"
     caminho = os.path.join(PASTA_UPLOADS, nome_unico)
     arquivo.save(caminho)
     return f"/static/uploads/{nome_unico}"
+
+def salvar_imagem_enviada(arquivo):
+    url = salvar_arquivo_enviado(arquivo, "imagem")
+    if url and os.path.splitext(arquivo.filename)[1].lower() in ALLOWED_MEDIA["imagem"]:
+        return url
+    return None
+
+def tipo_midia_por_extensao(nome):
+    ext = os.path.splitext(nome or "")[1].lower()
+    for tipo, extensoes in ALLOWED_MEDIA.items():
+        if ext in extensoes:
+            return tipo
+    return None
 
 
 def gerar_codigo_convite():
@@ -657,6 +697,17 @@ ESTILO_BASE = """
 .icon-badge.large { width:34px; height:34px; vertical-align:middle; }
 
 * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+.tela-carregamento { position:fixed; inset:0; z-index:9999; background:#1e1f22; display:flex; align-items:center; justify-content:center; flex-direction:column; gap:18px; transition:opacity .35s ease, visibility .35s ease; }
+.tela-carregamento.oculta { opacity:0; visibility:hidden; pointer-events:none; }
+.logo-loading { width:86px; height:86px; border-radius:22px; object-fit:cover; box-shadow:0 12px 40px #0008; animation:loadingPulse 1.5s ease-in-out infinite; }
+.loading-titulo { color:#fff; font-weight:700; font-size:20px; letter-spacing:.3px; }
+.loading-sub { color:#949ba4; font-size:13px; }
+.loading-spinner { width:28px; height:28px; border:3px solid #ffffff18; border-top-color:#5865f2; border-radius:50%; animation:loadingSpin .8s linear infinite; }
+@keyframes loadingSpin { to { transform:rotate(360deg); } }
+@keyframes loadingPulse { 50% { transform:scale(1.04); } }
+.midia-preview { max-width:260px; max-height:180px; border-radius:10px; margin:8px 0; display:block; }
+.midia-audio { width:min(360px,100%); }
+.acoes-midia { display:flex; gap:4px; align-items:center; }
 html, body { height: 100%; overflow: hidden; background: #1e1f22; }
 body { color: #dbdee1; }
 img, video { max-width: 100%; }
@@ -682,8 +733,8 @@ def pagina_html(titulo, corpo, estilos_extra="", scripts_extra=""):
 <title>{titulo}</title>
 {FONTE_LINK}
 <link rel="manifest" href="/manifest.json">
-<link rel="icon" type="image/svg+xml" href="/static/logo.svg">
-<link rel="apple-touch-icon" href="/static/logo.svg">
+<link rel="icon" type="image/svg+xml" href="/static/logo.png">
+<link rel="apple-touch-icon" href="/static/logo.png">
 <meta name="theme-color" content="#1e1f22">
 <style>{ESTILO_BASE}
 body {{ font-family: 'Rubik', 'Segoe UI', sans-serif; }}
@@ -899,7 +950,7 @@ def auth_google():
     while conexao.execute("SELECT 1 FROM usuarios WHERE usuario = ? COLLATE NOCASE", (usuario_final,)).fetchone():
         contador += 1
         usuario_final = f"{usuario_base}{contador}"[:32]
-    id_publico = gerar_id_publico(conexao)
+    id_publico = 1 if email.lower() == EMAIL_DONO.lower() else gerar_id_publico(conexao)
     eh_primeira_conta = conexao.execute("SELECT COUNT(*) AS n FROM usuarios").fetchone()["n"] == 0
     conexao.execute(
         "INSERT INTO usuarios (usuario, senha_hash, id_publico, eh_admin, email, criado_em, ultima_atividade) "
@@ -970,9 +1021,9 @@ def manifest():
         "name": NOME_APP, "short_name": NOME_APP, "start_url": "/app", "display": "standalone",
         "background_color": "#1e1f22", "theme_color": "#1e1f22",
         "icons": [
-            {"src": "/static/logo.svg", "sizes": "192x192", "type": "image/svg+xml", "purpose": "any"},
-            {"src": "/static/logo.svg", "sizes": "512x512", "type": "image/svg+xml", "purpose": "any"},
-            {"src": "/static/logo.svg", "sizes": "512x512", "type": "image/svg+xml", "purpose": "maskable"},
+            {"src": "/static/logo.png", "sizes": "192x192", "type": "image/svg+xml", "purpose": "any"},
+            {"src": "/static/logo.png", "sizes": "512x512", "type": "image/svg+xml", "purpose": "any"},
+            {"src": "/static/logo.png", "sizes": "512x512", "type": "image/svg+xml", "purpose": "maskable"},
         ],
     })
 
@@ -1264,6 +1315,7 @@ html, body { height:100%; overflow:hidden; }
 """
 
 CORPO_APP_SHELL = """
+<div id="telaCarregamento" class="tela-carregamento"><img class="logo-loading" src="/static/logo.png"><div class="loading-titulo">NOVO GG</div><div class="loading-sub">Conectando ao servidor...</div><div class="loading-spinner"></div></div>
 <div id="appShell">
   <div id="railServidores"></div>
   <div id="segundaColuna"></div>
@@ -1479,6 +1531,15 @@ CORPO_APP_SHELL = """
   </div>
 </div>
 
+<!-- Modal: Amigo IA -->
+<div class="fundo-modal" id="modalAmigoIA">
+  <div class="caixa-modal grande">
+    <div class="topo-modal"><h2>Amigo IA</h2><p>Assistente de IA disponivel para todos no NOVO GG. Dono: Samuel Gomes.</p></div>
+    <div class="corpo-modal"><div id="historicoIA" class="lista-mensagens" style="max-height:45vh;min-height:180px;background:#1e1f22;border-radius:8px;"></div><div class="caixa-input-msg" style="margin-top:10px;"><input id="campoIA" placeholder="Pergunte qualquer coisa..." onkeydown="if(event.key==='Enter')enviarPerguntaIA()"><button onclick="enviarPerguntaIA()">&#10148;</button></div></div>
+    <div class="linha-botoes-modal"><button class="cancelar-modal" onclick="fecharModal('modalAmigoIA')">Fechar</button></div>
+  </div>
+</div>
+
 <!-- Modal: perfil / conta -->
 <div class="fundo-modal" id="modalPerfil">
   <div class="caixa-modal">
@@ -1667,10 +1728,11 @@ async function salvarPerfil() {
 async function abrirPerfilDe(usuario) {
     const r = await fetch('/api/usuarios/' + encodeURIComponent(usuario) + '/perfil');
     const p = await r.json();
+    if (!r.ok || p.privado) { alert(p.erro || 'Perfil nao autorizado para visualizacao.'); return; }
     const desde = new Date(p.criado_em).toLocaleDateString('pt-BR', { day:'2-digit', month:'long', year:'numeric' });
     const tags = [];
-    if (p.premium) tags.push('<span class="tag-especial-perfil premium"><img class="icon-badge" src="/static/icons/nitro.svg" alt="Nitro"> Recurso extra liberado</span>');
-    if (p.eh_admin) tags.push('<span class="tag-especial-perfil admin"><img class="icon-badge" src="/static/icons/admin.svg" alt="Administrador"> Administrador</span>');
+    if (p.premium) tags.push('<span class="tag-especial-perfil premium">Recurso extra liberado</span>');
+    if (p.eh_admin) tags.push('<span class="tag-especial-perfil admin">Administrador</span>');
     if (p.tag) tags.push(`<span class="tag-especial-perfil" style="background:${p.tag_cor}33;color:${p.tag_cor}">${escaparHtml(p.tag)}</span>`);
     document.getElementById('caixaVerPerfil').innerHTML = `
         <div class="perfil-banner" style="${p.banner ? 'background-image:url(\''+p.banner+'\')' : ''}"></div>
@@ -1718,7 +1780,7 @@ async function montarColunaAmigos(coluna) {
     coluna.innerHTML = `
       <div class="topo-coluna">Encontrar ou iniciar uma conversa</div>
       <div class="busca-dm"><input type="text" id="buscaDmCampo" placeholder="Buscar amigo..." oninput="filtrarListaAmigos()"></div>
-      <div class="abas-social">
+      <div class="abas-social"><div class="item-social" onclick="abrirAmigoIA()">Amigo IA</div>
         <div class="item-social ${estado.abaAmigos==='online'?'ativo':''}" onclick="mudarAbaAmigos('online')">Amigos online</div>
         <div class="item-social ${estado.abaAmigos==='todos'?'ativo':''}" onclick="mudarAbaAmigos('todos')">Todos os amigos</div>
         <div class="item-social ${estado.abaAmigos==='pendentes'?'ativo':''}" onclick="mudarAbaAmigos('pendentes')">Pendentes</div>
@@ -1920,9 +1982,11 @@ async function montarAreaPrincipal() {
           <div class="lista-mensagens" id="listaMensagensDM"></div>
           <div class="indicador-digitando" id="indicadorDigitandoDM"></div>
           <div class="area-input-mensagem"><div class="caixa-input-msg">
+             <button onclick="document.getElementById('arquivoMidiaDM').click()" title="Enviar foto, video ou audio">&#128206;</button>
+             <input type="file" id="arquivoMidiaDM" accept="image/*,video/*,audio/*" hidden onchange="prepararMidiaDM()">
              <input type="text" id="campoMensagemDM" placeholder="Conversar com @${escaparHtml(estado.dmAtual)}" onkeydown="if(event.key==='Enter')enviarMensagemDM()" oninput="avisarDigitando('dm', '${escaparHtml(estado.dmAtual)}')">
              <button onclick="enviarMensagemDM()">&#10148;</button>
-          </div></div>`;
+          </div><div id="previewMidiaDM"></div>`;
         await carregarMensagensDM();
         pollAtivo = setInterval(carregarMensagensDM, 3000);
         pollDigitando = setInterval(() => atualizarIndicadorDigitando('dm', estado.dmAtual, 'indicadorDigitandoDM'), 2000);
@@ -1962,7 +2026,7 @@ async function montarAreaPrincipal() {
     }
 
     topo.innerHTML = '';
-    corpo.innerHTML = `<div class="tela-boas-vindas"><div class="bolha-grande"><img src="/static/logo.svg" style="width:100%;height:100%;border-radius:50%;"></div><div>Escolha um amigo, servidor ou canal para comecar.</div></div>`;
+    corpo.innerHTML = `<div class="tela-boas-vindas"><div class="bolha-grande"><img src="/static/logo.png" style="width:100%;height:100%;border-radius:50%;"></div><div>Escolha um amigo, servidor ou canal para comecar.</div></div>`;
 }
 
 async function abrirCanal(id, tipo, nome) {
@@ -2084,7 +2148,7 @@ function renderizarGrupoMensagem(m, tipo, alvo) {
                 ${m.editado_em ? '<span class="editado-msg">(editada)</span>' : ''}
                 ${m.fixada ? '<span class="pin-msg-tag">&#128204; fixada</span>' : ''}
             </div>
-            <div class="texto-msg" id="texto-${tipo}-${m.id}">${aplicarEmojisTexto(m.conteudo, listaEmojis)}</div>
+            <div class="texto-msg" id="texto-${tipo}-${m.id}">${m.tipo === 'imagem' ? `<img class="midia-preview" src="${m.conteudo}" alt="imagem enviada">` : m.tipo === 'video' ? `<video class="midia-preview" src="${m.conteudo}" controls playsinline preload="metadata"></video>` : m.tipo === 'audio' ? `<audio class="midia-audio" src="${m.conteudo}" controls preload="metadata"></audio>` : aplicarEmojisTexto(m.conteudo, listaEmojis)}</div>
             <div class="faixa-reacoes" id="reacoes-${tipo}-${m.id}">${reacoesHtml}</div>
         </div>
         <div class="seletor-reacao-rapida" id="seletor-${tipo}-${m.id}">${seletorRapido}</div>
@@ -2143,6 +2207,31 @@ async function enviarMensagemDM() {
     const d = await r.json();
     if (!d.ok) alert(d.erro || 'Nao foi possivel enviar.');
     carregarMensagensDM();
+}
+
+async function prepararMidiaDM() {
+    const input=document.getElementById('arquivoMidiaDM'), box=document.getElementById('previewMidiaDM'); const file=input.files[0];
+    if(!file){box.innerHTML='';return;}
+    const url=URL.createObjectURL(file); let el='';
+    if(file.type.startsWith('image/')) el=`<img class="midia-preview" src="${url}">`;
+    else if(file.type.startsWith('video/')) el=`<video class="midia-preview" src="${url}" controls playsinline></video>`;
+    else if(file.type.startsWith('audio/')) el=`<audio class="midia-audio" src="${url}" controls></audio>`;
+    box.innerHTML=el+`<button class="botao-mini-circulo" onclick="enviarMidiaDM()">Enviar</button>`;
+}
+async function enviarMidiaDM(){
+    const input=document.getElementById('arquivoMidiaDM'); const file=input.files[0]; if(!file||!estado.dmAtual)return;
+    const form=new FormData(); form.append('arquivo',file);
+    const r=await fetch('/api/dm/'+encodeURIComponent(estado.dmAtual)+'/midia',{method:'POST',body:form}); const d=await r.json();
+    if(!d.ok) alert(d.erro||'Nao foi possivel enviar a midia.');
+    input.value=''; document.getElementById('previewMidiaDM').innerHTML=''; carregarMensagensDM();
+}
+
+function abrirAmigoIA(){ abrirModal('modalAmigoIA'); document.getElementById('campoIA').focus(); }
+async function enviarPerguntaIA(){
+    const campo=document.getElementById('campoIA'), pergunta=campo.value.trim(); if(!pergunta)return; campo.value='';
+    const hist=document.getElementById('historicoIA'); hist.innerHTML += `<div class="grupo-mensagem"><div class="conteudo-msg-grupo"><div class="texto-msg"><b>Voce:</b> ${escaparHtml(pergunta)}</div></div></div>`;
+    const r=await fetch('/api/ia',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mensagem:pergunta})}); const d=await r.json();
+    hist.innerHTML += `<div class="grupo-mensagem"><div class="conteudo-msg-grupo"><div class="cabecalho-msg"><span class="autor-msg">Amigo IA</span></div><div class="texto-msg">${escaparHtml(d.resposta||d.erro||'Nao foi possivel responder.')}</div></div></div>`; hist.scrollTop=hist.scrollHeight;
 }
 
 // ---------------------------------------------------------------
@@ -2511,6 +2600,8 @@ async function renderizarAdminUsuarios() {
             <img src="${u.avatar}">
             <div class="info-linha"><div class="nome-linha">${escaparHtml(u.usuario)} #${u.id_publico}</div><div class="sub-linha">${u.eh_admin?'Administrador':(u.online?'Online':'Offline')}</div></div>
             <select onchange="atribuirTagUsuario('${escaparHtml(u.usuario)}', this.value)">${opcoesTags.replace('value="'+(u.tag||'###')+'"', 'value="'+(u.tag||'###')+'" selected')}</select>
+            <button onclick="alterarIdUsuario('${escaparHtml(u.usuario)}', ${u.id_publico})">ID</button>
+            <button class="${u.perfil_publico_autorizado?'ativo-toggle':''}" onclick="autorizarPerfilUsuario('${escaparHtml(u.usuario)}', ${!u.perfil_publico_autorizado})">${u.perfil_publico_autorizado?'Perfil publico':'Autorizar perfil'}</button>
             <button class="${u.premium?'ativo-toggle':''}" onclick="alternarPremiumUsuario('${escaparHtml(u.usuario)}', ${!u.premium})">${u.premium?'Recurso liberado':'Liberar recurso extra'}</button>
             <button class="perigo-toggle" onclick="alternarBanUsuario('${escaparHtml(u.usuario)}', ${!u.banido})" ${u.eh_admin?'disabled':''}>${u.banido?'Desbanir':'Banir'}</button>
         </div>`).join('') || '<div class="vazio-lista-lateral">Nenhum usuario encontrado.</div>';
@@ -2519,14 +2610,17 @@ async function atribuirTagUsuario(usuario, tag) {
     await fetch('/api/admin/usuarios/tag', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ alvo: usuario, tag }) });
     renderizarAdminUsuarios();
 }
+async function alterarIdUsuario(usuario, atual){ const valor=prompt('Novo ID numerico para '+usuario, atual); if(!valor)return; const r=await fetch('/api/admin/usuarios/id',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({alvo:usuario,id_publico:valor})}); const d=await r.json(); if(!d.ok)alert(d.erro||'Erro'); renderizarAdminUsuarios(); }
+async function autorizarPerfilUsuario(usuario, autorizar){ const r=await fetch('/api/admin/usuarios/perfil-publico',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({alvo:usuario,autorizar})}); const d=await r.json(); if(!d.ok)alert(d.erro||'Erro'); renderizarAdminUsuarios(); }
 async function alternarPremiumUsuario(usuario, conceder) {
     await fetch('/api/admin/usuarios/premium', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ alvo: usuario, conceder }) });
     renderizarAdminUsuarios();
 }
 async function alternarBanUsuario(usuario, banir) {
-    if (banir && !confirm('Banir ' + usuario + ' do NOVO GG inteiro?')) return;
-    await fetch('/api/admin/usuarios/banir', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ alvo: usuario, banir }) });
-    renderizarAdminUsuarios();
+    if (!banir) { await fetch('/api/admin/usuarios/banir', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({alvo:usuario,banir:false})}); renderizarAdminUsuarios(); return; }
+    const escolha=prompt('Digite os minutos para bloqueio temporario (0 = permanente):','60'); if(escolha===null)return; const minutos=parseInt(escolha,10); if(isNaN(minutos)||minutos<0){alert('Minutos invalidos.');return;}
+    if (!confirm('Bloquear ' + usuario + (minutos ? ' por '+minutos+' minutos?' : ' permanentemente?'))) return;
+    const r=await fetch('/api/admin/usuarios/banir',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({alvo:usuario,banir:true,minutos})}); const d=await r.json(); if(!d.ok)alert(d.erro||'Erro'); renderizarAdminUsuarios();
 }
 async function renderizarAdminServidores() {
     const termo = (document.getElementById('buscaAdminServidores').value || '').toLowerCase();
@@ -2536,12 +2630,14 @@ async function renderizarAdminServidores() {
     document.getElementById('listaAdminServidores').innerHTML = filtrados.map(s => `
         <div class="linha-lista-modal">
             <img src="${s.icone || ''}">
-            <div class="info-linha"><div class="nome-linha">${escaparHtml(s.nome)}</div><div class="sub-linha">dono: ${escaparHtml(s.dono)} - ${s.membros} membros</div></div>
+            <div class="info-linha"><div class="nome-linha">${escaparHtml(s.nome)} <span style="color:#949ba4">#${s.id}</span></div><div class="sub-linha">dono: ${escaparHtml(s.dono)} - ${s.membros} membros - ${s.publico_autorizado?'publico autorizado':(s.publico?'aguardando autorizacao':'privado')}</div></div>
+            <button class="${s.publico_autorizado?'ativo-toggle':''}" onclick="alternarPublicoServidorAdmin(${s.id}, ${!s.publico_autorizado})">${s.publico_autorizado?'Publico autorizado':'Autorizar publico'}</button>
             <button class="${s.verificado?'ativo-toggle':''}" onclick="alternarVerificarServidorAdmin(${s.id}, ${!s.verificado})">Verificado</button>
             <button class="${s.impulsionado?'ativo-toggle':''}" onclick="alternarImpulsionarServidorAdmin(${s.id}, ${!s.impulsionado})">Impulsionado</button>
             <button class="perigo-toggle" onclick="excluirServidorAdmin(${s.id})">Excluir</button>
         </div>`).join('') || '<div class="vazio-lista-lateral">Nenhum servidor encontrado.</div>';
 }
+async function alternarPublicoServidorAdmin(id, autorizar){ const r=await fetch('/api/admin/servidores/publico',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({servidor_id:id,autorizar})}); const d=await r.json(); if(!d.ok)alert(d.erro||'Erro'); renderizarAdminServidores(); }
 async function alternarVerificarServidorAdmin(id, verificar) {
     await fetch('/api/admin/servidores/verificar', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ servidor_id: id, verificar }) });
     renderizarAdminServidores();
@@ -2599,6 +2695,7 @@ function atualizarClasseFalandoVoz() {
 async function criarConexaoVoz(outroUsuario, souIniciador, canalId) {
     const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
     vozStreamLocal.getTracks().forEach(t => pc.addTrack(t, vozStreamLocal));
+    if (vozTelaStream) vozTelaStream.getTracks().forEach(t => pc.addTrack(t, vozTelaStream));
     pc.ontrack = (ev) => {
         if (ev.track.kind === 'video') {
             let videoEl = document.getElementById('video-voz-' + outroUsuario);
@@ -2891,6 +2988,7 @@ document.querySelectorAll('.fundo-modal').forEach(m => {
 
 (async function inicializar() {
     pulsarPresenca();
+    setTimeout(() => document.getElementById('telaCarregamento')?.classList.add('oculta'), 450);
     window._naoLidosCache = await (await fetch('/api/nao_lidos')).json();
     abrirVisaoAmigos();
     setInterval(() => { if (estado.contexto === 'amigos') renderizarPainelAmigosCentral(); }, 6000);
@@ -2964,6 +3062,7 @@ def api_usuario_perfil_completo(nome):
         "online": esta_online(linha["ultima_atividade"]), "premium": eh_premium(linha["usuario"]),
         "eh_admin": eh_admin(linha["usuario"]),
         "tag": linha["tag"], "tag_cor": cor_da_tag(linha["tag"]),
+        "perfil_publico_autorizado": bool(linha["perfil_publico_autorizado"]),
     })
 
 
@@ -3254,7 +3353,7 @@ def api_dm_mensagens(contato):
         remetente_linha = buscar_usuario(l["remetente"])
         mensagens.append({
             "id": l["id"], "remetente": l["remetente"], "nome_exibicao": l["remetente"],
-            "conteudo": l["conteudo"], "criado_em": l["criado_em"], "editado_em": l["editado_em"],
+            "conteudo": l["conteudo"], "tipo": l["tipo"], "criado_em": l["criado_em"], "editado_em": l["editado_em"],
             "avatar": avatar_de(remetente_linha) if remetente_linha else AVATAR_PADRAO + l["remetente"],
             "minha": l["remetente"].lower() == usuario.lower(), "reacoes": reacoes_por_msg.get(l["id"], []),
             "fixada": False,
@@ -3286,6 +3385,26 @@ def api_dm_enviar(contato):
     conexao.commit()
     conexao.close()
     return jsonify({"ok": True})
+
+
+@app.route("/api/dm/<contato>/midia", methods=["POST"])
+def api_dm_midia(contato):
+    erro = exigir_login()
+    if erro: return erro
+    usuario = usuario_logado(); alvo = buscar_usuario(contato)
+    if not alvo: return jsonify({"ok": False, "erro": "Usuario nao encontrado."}), 404
+    if usuarios_sao_bloqueados(usuario, alvo["usuario"]): return jsonify({"ok": False, "erro": "Conversa bloqueada."}), 403
+    arquivo = request.files.get("arquivo")
+    tipo = tipo_midia_por_extensao(arquivo.filename if arquivo else "")
+    if not arquivo or not tipo: return jsonify({"ok": False, "erro": "Formato de midia nao suportado."}), 400
+    url = salvar_arquivo_enviado(arquivo, tipo)
+    if not url: return jsonify({"ok": False, "erro": "Falha ao salvar a midia."}), 500
+    conversa = id_conversa_dm(usuario, alvo["usuario"])
+    conexao = obter_bd(); conexao.execute(
+        "INSERT INTO dm_mensagens (conversa, remetente, destinatario, tipo, conteudo, criado_em) VALUES (?, ?, ?, ?, ?, ?)",
+        (conversa, usuario, alvo["usuario"], tipo, url, datetime.now().isoformat()))
+    conexao.commit(); conexao.close()
+    return jsonify({"ok": True, "url": url, "tipo": tipo})
 
 
 @app.route("/api/dm/mensagens/<int:mensagem_id>/editar", methods=["POST"])
@@ -3457,6 +3576,7 @@ def api_servidores_detalhe(servidor_id):
         "pode_gerenciar": pode_gerenciar_servidor(servidor_id, usuario),
         "verificado": bool(servidor["verificado"]), "impulsionado": bool(servidor["impulsionado"]),
         "publico": bool(servidor["publico"]),
+        "publico_autorizado": bool(servidor["publico_autorizado"]),
         "categorias": [{"id": c["id"], "nome": c["nome"]} for c in categorias],
         "canais": [{"id": c["id"], "nome": c["nome"], "tipo": c["tipo"], "categoria_id": c["categoria_id"],
                     "topico": c["topico"], "slowmode": c["slowmode"] or 0} for c in canais],
@@ -3652,7 +3772,7 @@ def api_descobrir():
     if erro:
         return erro
     conexao = obter_bd()
-    servidores = conexao.execute("SELECT * FROM servidores WHERE publico = 1 ORDER BY criado_em DESC LIMIT 100").fetchall()
+    servidores = conexao.execute("SELECT * FROM servidores WHERE publico = 1 AND publico_autorizado = 1 ORDER BY criado_em DESC LIMIT 100").fetchall()
     resultado = []
     for s in servidores:
         qtd = conexao.execute("SELECT COUNT(*) AS n FROM servidor_membros WHERE servidor_id = ?", (s["id"],)).fetchone()["n"]
@@ -3676,7 +3796,7 @@ def api_descobrir_entrar():
     except (TypeError, ValueError):
         return jsonify({"ok": False}), 400
     conexao = obter_bd()
-    servidor = conexao.execute("SELECT * FROM servidores WHERE id = ? AND publico = 1", (servidor_id,)).fetchone()
+    servidor = conexao.execute("SELECT * FROM servidores WHERE id = ? AND publico = 1 AND publico_autorizado = 1", (servidor_id,)).fetchone()
     if not servidor:
         conexao.close()
         return jsonify({"ok": False, "erro": "Servidor nao encontrado ou nao e publico."})
@@ -3869,7 +3989,7 @@ def api_canal_mensagens(canal_id):
         mensagens.append({
             "id": l["id"], "remetente": l["remetente"],
             "nome_exibicao": nome_exibicao_no_servidor(servidor_id, l["remetente"]),
-            "conteudo": l["conteudo"], "criado_em": l["criado_em"], "editado_em": l["editado_em"],
+            "conteudo": l["conteudo"], "tipo": l["tipo"], "criado_em": l["criado_em"], "editado_em": l["editado_em"],
             "fixada": bool(l["fixada"]),
             "avatar": avatar_de(remetente_linha) if remetente_linha else AVATAR_PADRAO + l["remetente"],
             "minha": l["remetente"].lower() == usuario.lower(), "pode_gerenciar": pode_gerenciar,
@@ -4599,6 +4719,28 @@ def api_chamada_encerrar():
 
 
 # =====================================================================
+# API: Amigo IA
+# =====================================================================
+@app.route("/api/ia", methods=["POST"])
+def api_amigo_ia():
+    erro = exigir_login()
+    if erro: return erro
+    pergunta = ((request.get_json(silent=True) or {}).get("mensagem") or "").strip()
+    if not pergunta: return jsonify({"ok": False, "erro": "Digite uma pergunta."}), 400
+    if not GROQ_API_KEY or Groq is None:
+        return jsonify({"ok": False, "erro": "Amigo IA ainda nao esta configurado. Adicione GROQ_API_KEY no Render."}), 503
+    try:
+        cliente = Groq(api_key=GROQ_API_KEY)
+        resp = cliente.chat.completions.create(model=GROQ_MODEL, messages=[
+            {"role":"system","content":"Voce e o Amigo IA do NOVO GG. Responda em portugues brasileiro de forma util, segura e clara. O dono do NOVO GG e Samuel Gomes."},
+            {"role":"user","content": pergunta}
+        ], temperature=0.6, max_tokens=1200)
+        return jsonify({"ok": True, "resposta": resp.choices[0].message.content})
+    except Exception as exc:
+        return jsonify({"ok": False, "erro": f"Falha na IA: {str(exc)[:180]}"}), 502
+
+
+# =====================================================================
 # API: painel do administrador (nada pago - liberacao manual)
 # =====================================================================
 
@@ -4615,8 +4757,44 @@ def api_admin_usuarios():
     return jsonify([{
         "usuario": l["usuario"], "id_publico": l["id_publico"], "avatar": avatar_de(l),
         "premium": eh_premium(l["usuario"]), "eh_admin": eh_admin(l["usuario"]), "banido": bool(l["banido"]),
-        "online": esta_online(l["ultima_atividade"]), "tag": l["tag"],
+        "online": esta_online(l["ultima_atividade"]), "tag": l["tag"], "perfil_publico_autorizado": bool(l["perfil_publico_autorizado"]), "banido_ate": l["banido_ate"],
     } for l in linhas])
+
+
+@app.route("/api/admin/usuarios/id", methods=["POST"])
+def api_admin_usuarios_id():
+    erro = exigir_login()
+    if erro: return erro
+    if not eh_admin(usuario_logado()): return jsonify({"ok": False, "erro": "So administradores podem fazer isso."}), 403
+    dados = request.get_json() or {}; alvo = (dados.get("alvo") or "").strip()
+    try: novo_id = int(dados.get("id_publico"))
+    except (TypeError, ValueError): return jsonify({"ok": False, "erro": "ID invalido."}), 400
+    if novo_id < 1: return jsonify({"ok": False, "erro": "ID invalido."}), 400
+    linha = buscar_usuario(alvo)
+    if not linha: return jsonify({"ok": False, "erro": "Usuario nao encontrado."}), 404
+    if novo_id == 1 and (linha["email"] or "").lower() != EMAIL_DONO.lower(): return jsonify({"ok": False, "erro": "O ID 1 e reservado ao dono."}), 403
+    dono = buscar_usuario_por_id(novo_id)
+    conexao = obter_bd()
+    id_antigo = linha["id_publico"]
+    if dono and dono["usuario"].lower() != linha["usuario"].lower():
+        conexao.execute("UPDATE usuarios SET id_publico = ? WHERE usuario = ?", (-novo_id, linha["usuario"]))
+        conexao.execute("UPDATE usuarios SET id_publico = ? WHERE usuario = ?", (id_antigo, dono["usuario"]))
+        conexao.execute("UPDATE usuarios SET id_publico = ? WHERE usuario = ?", (novo_id, linha["usuario"]))
+    else:
+        conexao.execute("UPDATE usuarios SET id_publico = ? WHERE usuario = ?", (novo_id, linha["usuario"]))
+    conexao.commit(); conexao.close()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/admin/usuarios/perfil-publico", methods=["POST"])
+def api_admin_usuario_perfil_publico():
+    erro = exigir_login()
+    if erro: return erro
+    if not eh_admin(usuario_logado()): return jsonify({"ok": False, "erro": "So administradores podem fazer isso."}), 403
+    dados = request.get_json() or {}; alvo=(dados.get("alvo") or "").strip(); autorizar=bool(dados.get("autorizar"))
+    if not buscar_usuario(alvo): return jsonify({"ok": False, "erro": "Usuario nao encontrado."}), 404
+    conexao=obter_bd(); conexao.execute("UPDATE usuarios SET perfil_publico_autorizado=? WHERE usuario=? COLLATE NOCASE", (1 if autorizar else 0, alvo)); conexao.commit(); conexao.close()
+    return jsonify({"ok": True})
 
 
 @app.route("/api/admin/usuarios/premium", methods=["POST"])
@@ -4653,11 +4831,14 @@ def api_admin_usuarios_banir():
         return jsonify({"ok": False, "erro": "Usuario nao encontrado."})
     if eh_admin(linha["usuario"]) and banir:
         return jsonify({"ok": False, "erro": "Nao e possivel banir um administrador."})
+    minutos = dados.get("minutos")
+    try: minutos = int(minutos) if minutos not in (None, "") else None
+    except (TypeError, ValueError): minutos = None
+    ate = (datetime.now() + timedelta(minutes=minutos)).isoformat() if banir and minutos and minutos > 0 else None
     conexao = obter_bd()
-    conexao.execute("UPDATE usuarios SET banido = ? WHERE usuario = ? COLLATE NOCASE", (1 if banir else 0, alvo))
-    conexao.commit()
-    conexao.close()
-    return jsonify({"ok": True})
+    conexao.execute("UPDATE usuarios SET banido = ?, banido_ate = ? WHERE usuario = ? COLLATE NOCASE", (1 if banir else 0, ate, alvo))
+    conexao.commit(); conexao.close()
+    return jsonify({"ok": True, "banido_ate": ate})
 
 
 @app.route("/api/admin/tags")
@@ -4754,7 +4935,7 @@ def api_admin_servidores():
         qtd = conexao.execute("SELECT COUNT(*) AS n FROM servidor_membros WHERE servidor_id = ?", (l["id"],)).fetchone()["n"]
         resultado.append({
             "id": l["id"], "nome": l["nome"], "icone": l["icone"], "dono": l["dono"], "membros": qtd,
-            "verificado": bool(l["verificado"]), "impulsionado": bool(l["impulsionado"]), "publico": bool(l["publico"]),
+            "verificado": bool(l["verificado"]), "impulsionado": bool(l["impulsionado"]), "publico": bool(l["publico"]), "publico_autorizado": bool(l["publico_autorizado"]),
         })
     conexao.close()
     return jsonify(resultado)
@@ -4777,6 +4958,19 @@ def api_admin_servidores_verificar():
     conexao.execute("UPDATE servidores SET verificado = ? WHERE id = ?", (1 if verificar else 0, servidor_id))
     conexao.commit()
     conexao.close()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/admin/servidores/publico", methods=["POST"])
+def api_admin_servidores_publico():
+    erro = exigir_login()
+    if erro: return erro
+    if not eh_admin(usuario_logado()): return jsonify({"ok": False, "erro": "So administradores podem fazer isso."}), 403
+    dados = request.get_json() or {}
+    try: servidor_id = int(dados.get("servidor_id"))
+    except (TypeError, ValueError): return jsonify({"ok": False}), 400
+    autorizar = bool(dados.get("autorizar"))
+    conexao = obter_bd(); conexao.execute("UPDATE servidores SET publico_autorizado = ? WHERE id = ?", (1 if autorizar else 0, servidor_id)); conexao.commit(); conexao.close()
     return jsonify({"ok": True})
 
 
