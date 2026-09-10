@@ -121,9 +121,17 @@ def _bloquear_listagem_uploads():
 # =====================================================================
 
 def obter_bd():
-    conexao = sqlite3.connect(CAMINHO_BD)
+    # SQLite precisa de um pequeno tempo para esperar outra requisição terminar
+    # uma escrita. Isso evita "database is locked" em polling/WebRTC.
+    conexao = sqlite3.connect(CAMINHO_BD, timeout=30, check_same_thread=False)
     conexao.row_factory = sqlite3.Row
+    conexao.execute("PRAGMA busy_timeout = 30000")
     conexao.execute("PRAGMA foreign_keys = ON")
+    try:
+        conexao.execute("PRAGMA journal_mode = WAL")
+        conexao.execute("PRAGMA synchronous = NORMAL")
+    except sqlite3.OperationalError:
+        pass
     return conexao
 
 
@@ -4595,11 +4603,19 @@ def api_chamada_pendente():
         return erro
     usuario = usuario_logado()
     conexao = obter_bd()
-    conexao.execute(
-        "UPDATE chamadas_dm SET status = 'encerrada' WHERE status = 'chamando' AND criado_em < ?",
-        ((datetime.now() - timedelta(seconds=45)).isoformat(),),
-    )
-    conexao.commit()
+    # Esta rota é consultada repetidamente pelo navegador. A limpeza é útil,
+    # mas não pode derrubar a página caso outra requisição esteja escrevendo.
+    try:
+        conexao.execute(
+            "UPDATE chamadas_dm SET status = 'encerrada' WHERE status = 'chamando' AND criado_em < ?",
+            ((datetime.now() - timedelta(seconds=45)).isoformat(),),
+        )
+        conexao.commit()
+    except sqlite3.OperationalError as exc:
+        if "locked" not in str(exc).lower():
+            conexao.close()
+            raise
+        conexao.rollback()
     linha = conexao.execute(
         "SELECT * FROM chamadas_dm WHERE quem_recebe = ? COLLATE NOCASE AND status = 'chamando' ORDER BY id DESC LIMIT 1",
         (usuario,),
