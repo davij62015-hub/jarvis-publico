@@ -70,7 +70,7 @@ EMOJIS_SLOTS_IMPULSIONADO = 25
 
 # IA do Novo GG. Configure GROQ_API_KEY no Render para ativar o Amigo IA.
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
-GROQ_MODEL = os.environ.get("GROQ_MODEL", "llama-3.1-8b-instant")
+GROQ_MODEL = os.environ.get("GROQ_MODEL", "openai/gpt-oss-20b")
 IA_NOME = "Amigo IA"
 
 ALLOWED_MEDIA = {
@@ -657,8 +657,8 @@ def eh_dono_do_servidor(servidor_id, usuario):
 
 
 def pode_gerenciar_servidor(servidor_id, usuario):
-    """Dono do servidor OU administrador global podem gerenciar tudo."""
-    return eh_dono_do_servidor(servidor_id, usuario) or eh_admin(usuario)
+    """Somente o dono daquele servidor pode alterar sua estrutura e membros."""
+    return eh_dono_do_servidor(servidor_id, usuario)
 
 
 def canal_pertence_a_membro(canal_id, usuario):
@@ -1249,7 +1249,7 @@ html, body { height:100%; overflow:hidden; }
 .item-menu-flutuante.perigo { color:#da373c; }
 .item-menu-flutuante.perigo:hover { background:#da373c; color:#fff; }
 
-.fundo-modal { display:none; position:fixed; inset:0; background:#00000088; z-index:200; align-items:center; justify-content:center;
+.dialog-site-backdrop{display:none;position:fixed;inset:0;background:#0009;z-index:5000;align-items:center;justify-content:center;padding:18px}.dialog-site-backdrop.aberto{display:flex}.dialog-site{width:min(430px,calc(100vw - 36px));background:#2b2d31;border:1px solid #3f4147;border-radius:12px;box-shadow:0 18px 60px #0008;overflow:hidden}.dialog-site-topo{padding:18px 20px 8px}.dialog-site-topo h3{margin:0;color:#fff;font-size:18px}.dialog-site-topo p{margin:7px 0 0;color:#b5bac1;font-size:13px;line-height:1.45}.dialog-site-corpo{padding:12px 20px 18px}.dialog-site-corpo input{width:100%;box-sizing:border-box;background:#1e1f22;border:1px solid #4e5058;color:#fff;border-radius:8px;padding:11px 12px;outline:none}.dialog-site-corpo input:focus{border-color:#5865f2;box-shadow:0 0 0 2px #5865f244}.dialog-site-botoes{display:flex;justify-content:flex-end;gap:9px;padding:0 20px 18px}.dialog-site-botoes button{border:0;border-radius:8px;padding:10px 16px;font-weight:700;cursor:pointer}.dialog-site-cancelar{background:#4a4d55;color:#fff}.dialog-site-confirmar{background:#5865f2;color:#fff}.dialog-site-perigo{background:#da373c;color:#fff}.dialog-site-mensagem{color:#dbdee1;font-size:14px;line-height:1.5}.grupo-canais-titulo{display:flex;align-items:center;gap:6px;min-height:30px;padding:8px 8px 3px;color:#949ba4;font-size:11px;font-weight:800;letter-spacing:.5px;text-transform:uppercase}.vazio-categoria{padding:4px 14px 7px;color:#6d7078;font-size:12px}.item-canal-servidor{position:relative;display:flex;align-items:center;min-height:34px;padding:0 9px;border-radius:5px;margin:1px 6px;color:#b5bac1;cursor:pointer;font-size:14px}.item-canal-servidor:hover{background:#35373c;color:#dbdee1}.item-canal-servidor.ativo{background:#404249;color:#fff}.add-canal-btn{margin-left:auto;width:20px;height:20px;display:inline-flex;align-items:center;justify-content:center;border-radius:4px;color:#b5bac1;cursor:pointer}.add-canal-btn:hover{background:#404249;color:#fff}..fundo-modal { display:none; position:fixed; inset:0; background:#00000088; z-index:200; align-items:center; justify-content:center;
                padding:16px; }
 .fundo-modal.aberto { display:flex; }
 .caixa-modal { background:#313338; border-radius:8px; width:100%; max-width:460px; max-height:88vh; overflow-y:auto; }
@@ -1367,6 +1367,13 @@ html, body { height:100%; overflow:hidden; }
 
 CORPO_APP_SHELL = """
 <div id="telaCarregamento" class="tela-carregamento"><img class="logo-loading" src="/static/logo.png"><div class="loading-titulo">NOVO GG</div><div class="loading-sub">Conectando ao servidor...</div><div class="loading-progress">Preparando sua conta e seus dados...</div><div class="loading-spinner"></div></div><div id="toastSite" class="toast-site"></div>
+<div id="dialogSiteBackdrop" class="dialog-site-backdrop">
+  <div class="dialog-site" role="dialog" aria-modal="true">
+    <div class="dialog-site-topo"><h3 id="dialogSiteTitulo">NOVO GG</h3><p id="dialogSiteMensagem"></p></div>
+    <div class="dialog-site-corpo" id="dialogSiteCorpo"><input id="dialogSiteInput" autocomplete="off"></div>
+    <div class="dialog-site-botoes" id="dialogSiteBotoes"></div>
+  </div>
+</div>
 <div id="appShell">
   <div id="railServidores"></div>
   <div id="segundaColuna"></div>
@@ -1685,7 +1692,11 @@ let estado = {
 };
 
 function escaparHtml(t) { const d = document.createElement('div'); d.textContent = (t == null ? '' : String(t)); return d.innerHTML; }
-function toastSite(texto, tipo='sucesso'){ const t=document.getElementById('toastSite'); if(!t)return; t.textContent=texto; t.className='toast-site aberto '+tipo; clearTimeout(window._toastTimer); window._toastTimer=setTimeout(()=>t.classList.remove('aberto'),2400); }
+function toastSite(texto, tipo='sucesso'){ const t=document.getElementById('toastSite'); if(!t)return; t.textContent=texto; t.className='toast-site aberto '+tipo; clearTimeout(window._toastTimer); window._toastTimer=setTimeout(()=>t.classList.remove('aberto'),3000); }
+function fecharDialogSite(){ const b=document.getElementById('dialogSiteBackdrop'); if(b)b.classList.remove('aberto'); }
+function appPrompt(mensagem, valor=''){ return new Promise(resolve=>{ const b=document.getElementById('dialogSiteBackdrop'), titulo=document.getElementById('dialogSiteTitulo'), msg=document.getElementById('dialogSiteMensagem'), corpo=document.getElementById('dialogSiteCorpo'), botoes=document.getElementById('dialogSiteBotoes'), input=document.getElementById('dialogSiteInput'); titulo.textContent='NOVO GG'; msg.textContent=mensagem; corpo.style.display='block'; input.value=valor; input.placeholder='Digite aqui...'; botoes.innerHTML='<button class="dialog-site-cancelar">Cancelar</button><button class="dialog-site-confirmar">OK</button>'; const fim=v=>{ fecharDialogSite(); resolve(v); }; botoes.children[0].onclick=()=>fim(null); botoes.children[1].onclick=()=>fim(input.value); b.classList.add('aberto'); setTimeout(()=>{input.focus();input.select();},30); input.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();fim(input.value)}if(e.key==='Escape'){e.preventDefault();fim(null)}}; }); }
+function appConfirm(mensagem, perigo=false){ return new Promise(resolve=>{ const b=document.getElementById('dialogSiteBackdrop'), titulo=document.getElementById('dialogSiteTitulo'), msg=document.getElementById('dialogSiteMensagem'), corpo=document.getElementById('dialogSiteCorpo'), botoes=document.getElementById('dialogSiteBotoes'); titulo.textContent='Confirmar'; msg.textContent=mensagem; corpo.style.display='none'; botoes.innerHTML='<button class="dialog-site-cancelar">Cancelar</button><button class="'+(perigo?'dialog-site-perigo':'dialog-site-confirmar')+'">Confirmar</button>'; const fim=v=>{fecharDialogSite();resolve(v)}; botoes.children[0].onclick=()=>fim(false); botoes.children[1].onclick=()=>fim(true); b.classList.add('aberto'); }); }
+function appAlert(mensagem, tipo='erro'){ return new Promise(resolve=>{ const b=document.getElementById('dialogSiteBackdrop'), titulo=document.getElementById('dialogSiteTitulo'), msg=document.getElementById('dialogSiteMensagem'), corpo=document.getElementById('dialogSiteCorpo'), botoes=document.getElementById('dialogSiteBotoes'); titulo.textContent=tipo==='erro'?'NOVO GG':'Aviso'; msg.textContent=mensagem; corpo.style.display='none'; botoes.innerHTML='<button class="dialog-site-confirmar">OK</button>'; botoes.children[0].onclick=()=>{fecharDialogSite();resolve()}; b.classList.add('aberto'); }); }
 function instalarFallbackImagens(){ document.querySelectorAll('img').forEach(img=>{ if(img.dataset.fallback)return; img.dataset.fallback='1'; img.addEventListener('error',()=>{ if(img.src.endsWith('/static/logo.png'))return; img.src='/static/logo.png'; }); }); }
 
 function fecharModal(id) { document.getElementById(id).classList.remove('aberto'); }
@@ -1791,7 +1802,7 @@ async function salvarPerfil() {
 async function abrirPerfilDe(usuario) {
     const r = await fetch('/api/usuarios/' + encodeURIComponent(usuario) + '/perfil');
     const p = await r.json();
-    if (!r.ok || p.privado) { alert(p.erro || 'Perfil nao autorizado para visualizacao.'); return; }
+    if (!r.ok || p.privado) { appAlert(p.erro || 'Perfil nao autorizado para visualizacao.'); return; }
     const desde = new Date(p.criado_em).toLocaleDateString('pt-BR', { day:'2-digit', month:'long', year:'numeric' });
     const tags = [];
     if (p.premium) tags.push('<span class="tag-especial-perfil premium">Recurso extra liberado</span>');
@@ -1928,14 +1939,19 @@ function renderizarCanais(categorias, canais, podeGerenciar) {
         return `<div class="item-canal-servidor ${ativo}" id="canalvoz-${c.id}" onclick="abrirCanal(${c.id},'voz','${escaparHtml(c.nome)}')">&#128266; ${escaparHtml(c.nome)}<span class="contagem-voz"></span>${iconeGear}</div>`;
     }
     let html = '';
-    const semCategoria = canais.filter(c => !c.categoria_id);
-    semCategoria.forEach(c => { html += linhaCanal(c); });
-    categorias.forEach(cat => {
-        const iconesCategoria = podeGerenciar ? `<span class="add-canal-btn" title="Renomear categoria" onclick="renomearCategoria(${cat.id},'${escaparHtml(cat.nome)}')">&#9998;</span><span class="add-canal-btn" onclick="abrirModalCriarCanalComCategoria(${cat.id})">+</span>` : '';
-        html += `<div class="grupo-canais-titulo">${escaparHtml(cat.nome)} ${iconesCategoria}</div>`;
-        canais.filter(c => c.categoria_id === cat.id).forEach(c => { html += linhaCanal(c); });
+    const cats = [...(categorias || [])].sort((a,b)=>(a.ordem||0)-(b.ordem||0));
+    cats.forEach(cat => {
+        const iconesCategoria = podeGerenciar ? `<span class="add-canal-btn" title="Renomear categoria" onclick="renomearCategoria(${cat.id},'${escaparHtml(cat.nome)}')">&#9998;</span><span class="add-canal-btn" title="Adicionar canal" onclick="abrirModalCriarCanalComCategoria(${cat.id})">+</span>` : '';
+        const canaisCat = canais.filter(c => c.categoria_id === cat.id).sort((a,b)=>(a.ordem||0)-(b.ordem||0));
+        html += `<div class="grupo-canais-titulo"><span>${escaparHtml(cat.nome)}</span>${iconesCategoria}</div>`;
+        if (canaisCat.length) canaisCat.forEach(c => { html += linhaCanal(c); });
+        else html += '<div class="vazio-categoria">Nenhum canal</div>';
     });
-    html += `<div class="grupo-canais-titulo">Sem categoria ${podeGerenciar ? '<span class="add-canal-btn" onclick="abrirModalCriarCanalComCategoria(null)">+</span>' : ''}</div>`;
+    const semCategoria = canais.filter(c => !c.categoria_id).sort((a,b)=>(a.ordem||0)-(b.ordem||0));
+    if (semCategoria.length || !cats.length) {
+        html += `<div class="grupo-canais-titulo"><span>SEM CATEGORIA</span>${podeGerenciar ? '<span class="add-canal-btn" title="Adicionar canal" onclick="abrirModalCriarCanalComCategoria(null)">+</span>' : ''}</div>`;
+        semCategoria.forEach(c => { html += linhaCanal(c); });
+    }
     div.innerHTML = html || '<div class="vazio-lista-lateral">Nenhum canal ainda.</div>';
 }
 
@@ -1973,14 +1989,14 @@ async function criarCategoria() {
     fecharModal('modalCriarCategoria'); montarColunaLateral();
 }
 async function renomearCategoria(categoriaId, nomeAtual) {
-    const novoNome = prompt('Novo nome da categoria:', nomeAtual);
+    const novoNome = await appPrompt('Novo nome da categoria:', nomeAtual);
     if (novoNome === null) return;
     const nome = novoNome.trim();
     if (!nome) return;
     const r = await fetch('/api/categorias/' + categoriaId + '/editar', {
         method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ nome }) });
     const d = await r.json();
-    if (!d.ok) { alert(d.erro || 'Nao foi possivel renomear.'); return; }
+    if (!d.ok) { appAlert(d.erro || 'Nao foi possivel renomear.'); return; }
     montarColunaLateral();
 }
 let canalEmEdicaoId = null;
@@ -2011,7 +2027,7 @@ async function salvarEdicaoCanal() {
     fecharModal('modalEditarCanal'); montarColunaLateral(); montarAreaPrincipal();
 }
 async function excluirCanalAtualEditado() {
-    if (!confirm('Excluir este canal?')) return;
+    if (!await appConfirm('Excluir este canal?')) return;
     await fetch('/api/canais/' + canalEmEdicaoId + '/excluir', { method:'POST' });
     fecharModal('modalEditarCanal');
     if (estado.canalAtual === canalEmEdicaoId) { estado.canalAtual = null; }
@@ -2184,7 +2200,7 @@ async function cancelarPedidoEnviado(usuario) {
     renderizarPainelAmigosCentral();
 }
 async function removerAmizade(usuario) {
-    if (!confirm('Remover ' + usuario + ' da sua lista de amigos?')) return;
+    if (!await appConfirm('Remover ' + usuario + ' da sua lista de amigos?')) return;
     await fetch('/api/amigos/remover', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ usuario }) });
     renderizarPainelAmigosCentral();
 }
@@ -2209,7 +2225,7 @@ function alternarMembroGrupo(el){ if(el.checked) grupoSelecionados.add(el.value)
 async function criarGrupoSelecionado(){
     const nomes=[...grupoSelecionados]; const msg=document.getElementById('msgCriarGrupo');
     if(!nomes.length){msg.textContent='Escolha pelo menos 1 amigo.';return;}
-    const nome=prompt('Nome do grupo:','Novo grupo'); if(!nome)return;
+    const nome=await appPrompt('Nome do grupo:','Novo grupo'); if(!nome)return;
     const r=await fetch('/api/grupos/criar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({nome, membros:nomes})}); const d=await r.json();
     if(!d.ok){msg.textContent=d.erro||'Não foi possível criar.';return;}
     fecharModal('modalCriarGrupo'); estado.contexto='grupo'; estado.grupoAtual=d.id; estado.dmAtual=null; await montarTudo(); toastSite('Grupo criado com sucesso.','sucesso');
@@ -2289,7 +2305,7 @@ async function confirmarEdicaoMensagem(tipo, id) {
     if (tipo === 'canal') carregarMensagensCanal(); else if (tipo === 'grupo') carregarMensagensGrupo(); else carregarMensagensDM();
 }
 async function excluirMensagem(tipo, id) {
-    if (!confirm('Excluir esta mensagem?')) return;
+    if (!await appConfirm('Excluir esta mensagem?')) return;
     const rota = tipo === 'canal' ? '/api/canais/mensagens/' + id + '/excluir' : '/api/dm/mensagens/' + id + '/excluir';
     await fetch(rota, { method:'POST' });
     if (tipo === 'canal') carregarMensagensCanal(); else if (tipo === 'grupo') carregarMensagensGrupo(); else carregarMensagensDM();
@@ -2370,12 +2386,12 @@ async function enviarMensagemCanal() {
     const r = await fetch('/api/canais/' + estado.canalAtual + '/enviar', {
         method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ texto }) });
     const d = await r.json();
-    if (!d.ok) alert(d.erro || 'Nao foi possivel enviar.');
+    if (!d.ok) appAlert(d.erro || 'Nao foi possivel enviar.');
     carregarMensagensCanal();
 }
 async function abrirFixadas() {
     document.getElementById('menuFlutuanteServidor').classList.remove('aberto');
-    if (!estado.canalAtual || estado.tipoCanalAtual !== 'texto') { alert('Abra um canal de texto primeiro.'); return; }
+    if (!estado.canalAtual || estado.tipoCanalAtual !== 'texto') { appAlert('Abra um canal de texto primeiro.'); return; }
     const r = await fetch('/api/canais/' + estado.canalAtual + '/fixadas');
     const d = await r.json();
     document.getElementById('listaFixadas').innerHTML = (d.mensagens || []).map(m => `
@@ -2495,7 +2511,7 @@ async function abrirDescoberta() {
 async function entrarServidorPublico(servidorId) {
     const r = await fetch('/api/descobrir/entrar', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ servidor_id: servidorId }) });
     const d = await r.json();
-    if (!d.ok) { alert(d.erro || 'Nao foi possivel entrar.'); return; }
+    if (!d.ok) { appAlert(d.erro || 'Nao foi possivel entrar.'); return; }
     fecharModal('modalDescobrir');
     await abrirServidor(servidorId);
 }
@@ -2576,12 +2592,12 @@ async function carregarMembrosConfig() {
         ${m.usuario !== MEU_USUARIO ? '<button class="perigo-toggle" onclick="removerMembroServidor(\''+escaparHtml(m.usuario)+'\')">Expulsar</button><button class="perigo-toggle" onclick="banirMembroServidor(\''+escaparHtml(m.usuario)+'\')">Banir</button>' : ''}</div>`).join('');
 }
 async function removerMembroServidor(usuario) {
-    if (!confirm('Expulsar ' + usuario + ' do servidor?')) return;
+    if (!await appConfirm('Expulsar ' + usuario + ' do servidor?')) return;
     await fetch('/api/servidores/' + estado.servidorAtual + '/membro/remover', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ usuario }) });
     carregarMembrosConfig();
 }
 async function banirMembroServidor(usuario) {
-    if (!confirm('Banir ' + usuario + ' deste servidor? Essa pessoa nao vai conseguir voltar a entrar.')) return;
+    if (!await appConfirm('Banir ' + usuario + ' deste servidor? Essa pessoa nao vai conseguir voltar a entrar.')) return;
     await fetch('/api/servidores/' + estado.servidorAtual + '/membro/banir', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ usuario }) });
     carregarMembrosConfig(); carregarBanidosConfig();
 }
@@ -2598,17 +2614,17 @@ async function desbanirMembroServidor(usuario) {
 }
 async function excluirServidorAtual() {
     document.getElementById('menuFlutuanteServidor').classList.remove('aberto');
-    if (!confirm('Excluir este servidor para sempre? Essa acao nao pode ser desfeita.')) return;
+    if (!await appConfirm('Excluir este servidor para sempre? Essa acao nao pode ser desfeita.')) return;
     const r = await fetch('/api/servidores/' + estado.servidorAtual + '/excluir', { method:'POST' });
     const d = await r.json();
-    if (d.ok) { abrirVisaoAmigos(); } else { alert(d.erro || 'Nao foi possivel excluir.'); }
+    if (d.ok) { abrirVisaoAmigos(); } else { appAlert(d.erro || 'Nao foi possivel excluir.'); }
 }
 async function sairDoServidorAtual() {
     document.getElementById('menuFlutuanteServidor').classList.remove('aberto');
-    if (!confirm('Sair deste servidor?')) return;
+    if (!await appConfirm('Sair deste servidor?')) return;
     const r = await fetch('/api/servidores/' + estado.servidorAtual + '/sair', { method:'POST' });
     const d = await r.json();
-    if (d.ok) { abrirVisaoAmigos(); } else { alert(d.erro || 'Nao foi possivel sair.'); }
+    if (d.ok) { abrirVisaoAmigos(); } else { appAlert(d.erro || 'Nao foi possivel sair.'); }
 }
 
 // ---------------------------------------------------------------
@@ -2642,17 +2658,17 @@ async function criarCargo() {
     else { msg.className='mensagem-modal erro'; msg.textContent = d.erro || 'Erro.'; }
 }
 async function excluirCargo(id) {
-    if (!confirm('Excluir este cargo?')) return;
+    if (!await appConfirm('Excluir este cargo?')) return;
     await fetch('/api/servidores/' + estado.servidorAtual + '/cargos/' + id + '/excluir', { method:'POST' });
     carregarListaCargos();
 }
 async function atribuirCargoPrompt(cargoId, nomeCargo) {
-    const usuario = prompt('Apelido de quem vai receber o cargo "' + nomeCargo + '":');
+    const usuario = await appPrompt('Apelido de quem vai receber o cargo "' + nomeCargo + '":');
     if (!usuario) return;
     const r = await fetch('/api/servidores/' + estado.servidorAtual + '/cargos/atribuir', {
         method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ usuario: usuario.trim(), cargo_id: cargoId }) });
     const d = await r.json();
-    if (!d.ok) alert(d.erro || 'Nao foi possivel atribuir.');
+    if (!d.ok) appAlert(d.erro || 'Nao foi possivel atribuir.');
     else renderizarPainelMembrosServidor();
 }
 
@@ -2697,7 +2713,7 @@ async function criarTagGlobal() {
     renderizarAdminTags();
 }
 async function excluirTagGlobal(nome) {
-    if (!confirm('Excluir a tag ' + nome + '? Ela sai de todo mundo que tiver ela.')) return;
+    if (!await appConfirm('Excluir a tag ' + nome + '? Ela sai de todo mundo que tiver ela.')) return;
     await fetch('/api/admin/tags/excluir', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ nome }) });
     renderizarAdminTags();
 }
@@ -2725,17 +2741,17 @@ async function atribuirTagUsuario(usuario, tag) {
     await fetch('/api/admin/usuarios/tag', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ alvo: usuario, tag }) });
     renderizarAdminUsuarios();
 }
-async function alterarIdUsuario(usuario, atual){ const valor=prompt('Novo ID numerico para '+usuario, atual); if(!valor)return; const r=await fetch('/api/admin/usuarios/id',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({alvo:usuario,id_publico:valor})}); const d=await r.json(); if(!d.ok)alert(d.erro||'Erro'); renderizarAdminUsuarios(); }
-async function autorizarPerfilUsuario(usuario, autorizar){ const r=await fetch('/api/admin/usuarios/perfil-publico',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({alvo:usuario,autorizar})}); const d=await r.json(); if(!d.ok)alert(d.erro||'Erro'); renderizarAdminUsuarios(); }
+async function alterarIdUsuario(usuario, atual){ const valor=await appPrompt('Novo ID numerico para '+usuario, atual); if(!valor)return; const r=await fetch('/api/admin/usuarios/id',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({alvo:usuario,id_publico:valor})}); const d=await r.json(); if(!d.ok)appAlert(d.erro||'Erro'); renderizarAdminUsuarios(); }
+async function autorizarPerfilUsuario(usuario, autorizar){ const r=await fetch('/api/admin/usuarios/perfil-publico',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({alvo:usuario,autorizar})}); const d=await r.json(); if(!d.ok)appAlert(d.erro||'Erro'); renderizarAdminUsuarios(); }
 async function alternarPremiumUsuario(usuario, conceder) {
     await fetch('/api/admin/usuarios/premium', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ alvo: usuario, conceder }) });
     renderizarAdminUsuarios();
 }
 async function alternarBanUsuario(usuario, banir) {
     if (!banir) { await fetch('/api/admin/usuarios/banir', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({alvo:usuario,banir:false})}); renderizarAdminUsuarios(); return; }
-    const escolha=prompt('Digite os minutos para bloqueio temporario (0 = permanente):','60'); if(escolha===null)return; const minutos=parseInt(escolha,10); if(isNaN(minutos)||minutos<0){alert('Minutos invalidos.');return;}
-    if (!confirm('Bloquear ' + usuario + (minutos ? ' por '+minutos+' minutos?' : ' permanentemente?'))) return;
-    const r=await fetch('/api/admin/usuarios/banir',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({alvo:usuario,banir:true,minutos})}); const d=await r.json(); if(!d.ok)alert(d.erro||'Erro'); renderizarAdminUsuarios();
+    const escolha=await appPrompt('Digite os minutos para bloqueio temporario (0 = permanente):','60'); if(escolha===null)return; const minutos=parseInt(escolha,10); if(isNaN(minutos)||minutos<0){appAlert('Minutos invalidos.');return;}
+    if (!await appConfirm('Bloquear ' + usuario + (minutos ? ' por '+minutos+' minutos?' : ' permanentemente?'))) return;
+    const r=await fetch('/api/admin/usuarios/banir',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({alvo:usuario,banir:true,minutos})}); const d=await r.json(); if(!d.ok)appAlert(d.erro||'Erro'); renderizarAdminUsuarios();
 }
 async function renderizarAdminServidores() {
     const termo = (document.getElementById('buscaAdminServidores').value || '').toLowerCase();
@@ -2752,7 +2768,7 @@ async function renderizarAdminServidores() {
             <button class="perigo-toggle" onclick="excluirServidorAdmin(${s.id})">Excluir</button>
         </div>`).join('') || '<div class="vazio-lista-lateral">Nenhum servidor encontrado.</div>';
 }
-async function alternarPublicoServidorAdmin(id, autorizar){ const r=await fetch('/api/admin/servidores/publico',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({servidor_id:id,autorizar})}); const d=await r.json(); if(!d.ok)alert(d.erro||'Erro'); renderizarAdminServidores(); }
+async function alternarPublicoServidorAdmin(id, autorizar){ const r=await fetch('/api/admin/servidores/publico',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({servidor_id:id,autorizar})}); const d=await r.json(); if(!d.ok)appAlert(d.erro||'Erro'); renderizarAdminServidores(); }
 async function alternarVerificarServidorAdmin(id, verificar) {
     await fetch('/api/admin/servidores/verificar', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ servidor_id: id, verificar }) });
     renderizarAdminServidores();
@@ -2762,7 +2778,7 @@ async function alternarImpulsionarServidorAdmin(id, impulsionar) {
     renderizarAdminServidores();
 }
 async function excluirServidorAdmin(id) {
-    if (!confirm('Excluir este servidor (acao de administrador)?')) return;
+    if (!await appConfirm('Excluir este servidor (acao de administrador)?')) return;
     await fetch('/api/admin/servidores/' + id + '/excluir', { method:'POST' });
     renderizarAdminServidores(); carregarRailServidores();
 }
@@ -2870,7 +2886,7 @@ function htmlBotoesVoz() {
 }
 async function entrarCanalVoz(canalId) {
     try { vozStreamLocal = await navigator.mediaDevices.getUserMedia({ audio: true }); }
-    catch (e) { alert('Nao foi possivel acessar o microfone.'); return; }
+    catch (e) { appAlert('Nao foi possivel acessar o microfone.'); return; }
     vozCanalAtualId = canalId;
     monitorarVolumeVoz(vozStreamLocal, MEU_USUARIO);
     await fetch('/api/voz/entrar', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ canal_id: canalId }) });
@@ -3027,12 +3043,12 @@ async function iniciarChamadaDM(comVideo) {
     if (!estado.dmAtual) return;
     contatoChamadaDm = estado.dmAtual; dmComVideo = !!comVideo;
     abrirModalChamadaDM(contatoChamadaDm, null, 'Chamando...', '<button class="botao-chamada-circulo encerrar" onclick="encerrarChamadaDM(true)">&#128222;</button>', dmComVideo);
-    try { await criarConexaoDM(dmComVideo); } catch (e) { alert('Nao foi possivel acessar o microfone/camera.'); fecharModalChamadaDM(); return; }
+    try { await criarConexaoDM(dmComVideo); } catch (e) { appAlert('Nao foi possivel acessar o microfone/camera.'); fecharModalChamadaDM(); return; }
     const oferta = await dmPc.createOffer();
     await dmPc.setLocalDescription(oferta);
     const r = await fetch('/api/chamada/iniciar', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ contato: contatoChamadaDm, oferta, com_video: dmComVideo }) });
     const d = await r.json();
-    if (!d.ok) { alert(d.erro || 'Nao foi possivel ligar.'); fecharModalChamadaDM(); return; }
+    if (!d.ok) { appAlert(d.erro || 'Nao foi possivel ligar.'); fecharModalChamadaDM(); return; }
     chamadaDmAtualId = d.chamada_id;
     iniciarPollCandidatosDM();
     dmPollStatus = setInterval(async () => {
@@ -3692,8 +3708,10 @@ def api_servidores_criar():
     )
     servidor_id = cursor.lastrowid
     conexao.execute("INSERT INTO servidor_membros (servidor_id, usuario, entrou_em) VALUES (?, ?, ?)", (servidor_id, usuario, agora))
-    conexao.execute("INSERT INTO canais (servidor_id, nome, tipo, ordem, criado_em) VALUES (?, 'geral', 'texto', 0, ?)", (servidor_id, agora))
-    conexao.execute("INSERT INTO canais (servidor_id, nome, tipo, ordem, criado_em) VALUES (?, 'Geral', 'voz', 1, ?)", (servidor_id, agora))
+    categoria_padrao = conexao.execute("INSERT INTO categorias (servidor_id, nome, ordem, criado_em) VALUES (?, 'MEMBROS', 0, ?)", (servidor_id, agora))
+    categoria_id = categoria_padrao.lastrowid
+    conexao.execute("INSERT INTO canais (servidor_id, categoria_id, nome, tipo, ordem, criado_em) VALUES (?, ?, 'chat-geral', 'texto', 0, ?)", (servidor_id, categoria_id, agora))
+    conexao.execute("INSERT INTO canais (servidor_id, categoria_id, nome, tipo, ordem, criado_em) VALUES (?, ?, 'voz-geral', 'voz', 1, ?)", (servidor_id, categoria_id, agora))
     conexao.commit()
     conexao.close()
     return jsonify({"ok": True, "servidor_id": servidor_id})
@@ -4941,16 +4959,30 @@ def api_amigo_ia():
     if not pergunta: return jsonify({"ok": False, "erro": "Digite uma pergunta."}), 400
     if not GROQ_API_KEY or Groq is None:
         return jsonify({"ok": False, "erro": "Amigo IA ainda nao esta configurado. Adicione GROQ_API_KEY no Render."}), 503
-    try:
-        cliente = Groq(api_key=GROQ_API_KEY)
-        resp = cliente.chat.completions.create(model=GROQ_MODEL, messages=[
-            {"role":"system","content":"Voce e o Amigo IA do NOVO GG. Responda em portugues brasileiro de forma util, segura e clara. O dono do NOVO GG e Samuel Gomes."},
-            {"role":"user","content": pergunta}
-        ], temperature=0.6, max_tokens=1200)
-        return jsonify({"ok": True, "resposta": resp.choices[0].message.content})
-    except Exception as exc:
-        return jsonify({"ok": False, "erro": f"Falha na IA: {str(exc)[:180]}"}), 502
-
+    modelos = [GROQ_MODEL, "openai/gpt-oss-20b", "openai/gpt-oss-120b"]
+    modelos = list(dict.fromkeys([m for m in modelos if m]))
+    ultimo_erro = None
+    for modelo in modelos:
+        try:
+            cliente = Groq(api_key=GROQ_API_KEY)
+            resp = cliente.chat.completions.create(
+                model=modelo,
+                messages=[
+                    {"role":"system","content":"Voce e o Amigo IA do NOVO GG. Responda em portugues brasileiro de forma util, clara e segura. O dono do NOVO GG e Samuel Gomes. Nao invente recursos que o aplicativo nao possui."},
+                    {"role":"user","content": pergunta}
+                ],
+                temperature=0.6,
+                max_tokens=1200,
+            )
+            resposta = (resp.choices[0].message.content or "").strip()
+            if resposta:
+                return jsonify({"ok": True, "resposta": resposta, "modelo": modelo})
+        except Exception as exc:
+            ultimo_erro = str(exc)
+            # Se um modelo foi aposentado ou nao esta liberado para a chave, tenta o proximo.
+            if "404" not in ultimo_erro and "model_not_found" not in ultimo_erro.lower() and "does not exist" not in ultimo_erro.lower():
+                break
+    return jsonify({"ok": False, "erro": "A IA esta temporariamente indisponivel. O NOVO GG tentou os modelos configurados e nao conseguiu acessar nenhum deles."}), 502
 
 # =====================================================================
 # API: painel do administrador (nada pago - liberacao manual)
