@@ -33,7 +33,7 @@ except Exception:
     Groq = None
 from datetime import datetime, timedelta
 
-from flask import Flask, request, jsonify, session, redirect, url_for
+from flask import Flask, request, jsonify, session, redirect, url_for, send_from_directory
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 
@@ -114,6 +114,11 @@ def _adicionar_cabecalhos_seguranca(resposta):
 @app.route("/static/uploads/")
 def _bloquear_listagem_uploads():
     return "Acesso negado.", 403
+
+@app.route("/static/uploads/<path:nome>")
+def servir_upload(nome):
+    # Os arquivos enviados podem estar no disco persistente do Render (/data).
+    return send_from_directory(PASTA_UPLOADS, nome, conditional=True)
 
 
 # =====================================================================
@@ -206,6 +211,33 @@ def iniciar_bd():
         )
     """)
     _adicionar_coluna_se_faltar(conexao, "dm_mensagens", "editado_em", "TEXT")
+
+    conexao.execute("""
+        CREATE TABLE IF NOT EXISTS grupos_dm (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nome TEXT NOT NULL,
+            criado_por TEXT NOT NULL,
+            criado_em TEXT NOT NULL
+        )
+    """)
+    conexao.execute("""
+        CREATE TABLE IF NOT EXISTS grupo_membros (
+            grupo_id INTEGER NOT NULL,
+            usuario TEXT NOT NULL,
+            entrou_em TEXT NOT NULL,
+            PRIMARY KEY (grupo_id, usuario)
+        )
+    """)
+    conexao.execute("""
+        CREATE TABLE IF NOT EXISTS grupo_mensagens (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            grupo_id INTEGER NOT NULL,
+            remetente TEXT NOT NULL,
+            tipo TEXT NOT NULL DEFAULT 'texto',
+            conteudo TEXT NOT NULL,
+            criado_em TEXT NOT NULL
+        )
+    """)
 
     conexao.execute("""
         CREATE TABLE IF NOT EXISTS servidores (
@@ -709,7 +741,9 @@ ESTILO_BASE = """
 .tela-carregamento.oculta { opacity:0; visibility:hidden; pointer-events:none; }
 .logo-loading { width:86px; height:86px; border-radius:22px; object-fit:cover; box-shadow:0 12px 40px #0008; animation:loadingPulse 1.5s ease-in-out infinite; }
 .loading-titulo { color:#fff; font-weight:700; font-size:20px; letter-spacing:.3px; }
-.loading-sub { color:#949ba4; font-size:13px; }
+ .loading-sub { color:#949ba4; font-size:13px; }
+.loading-progress { color:#6d7480; font-size:11px; min-height:16px; }
+
 .loading-spinner { width:28px; height:28px; border:3px solid #ffffff18; border-top-color:#5865f2; border-radius:50%; animation:loadingSpin .8s linear infinite; }
 @keyframes loadingSpin { to { transform:rotate(360deg); } }
 @keyframes loadingPulse { 50% { transform:scale(1.04); } }
@@ -1029,9 +1063,9 @@ def manifest():
         "name": NOME_APP, "short_name": NOME_APP, "start_url": "/app", "display": "standalone",
         "background_color": "#1e1f22", "theme_color": "#1e1f22",
         "icons": [
-            {"src": "/static/logo.png", "sizes": "192x192", "type": "image/svg+xml", "purpose": "any"},
-            {"src": "/static/logo.png", "sizes": "512x512", "type": "image/svg+xml", "purpose": "any"},
-            {"src": "/static/logo.png", "sizes": "512x512", "type": "image/svg+xml", "purpose": "maskable"},
+            {"src": "/static/logo.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
+            {"src": "/static/logo.png", "sizes": "512x512", "type": "image/png", "purpose": "any"},
+            {"src": "/static/logo.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"},
         ],
     })
 
@@ -1257,7 +1291,11 @@ html, body { height:100%; overflow:hidden; }
 .secao-modal-tab { display:none; }
 .secao-modal-tab.ativa { display:block; }
 
-.linha-lista-modal { display:flex; align-items:center; gap:10px; padding:9px 4px; border-bottom:1px solid #3a3c41; font-size:13px; }
+.linha-lista-modal { display:flex; align-items:center; gap:10px; padding:10px 4px; border-bottom:1px solid #3a3c41; font-size:13px; min-width:0; }
+.linha-lista-modal > img { flex:0 0 34px; }
+.linha-lista-modal select { flex:0 0 130px; min-width:0; background:#1e1f22; border:1px solid #3a3c41; color:#dbdee1; border-radius:6px; padding:7px 8px; }
+.linha-lista-modal .admin-acoes { display:flex; align-items:center; justify-content:flex-end; gap:6px; flex-wrap:wrap; }
+@media (max-width:720px){ .linha-lista-modal { flex-wrap:wrap; } .linha-lista-modal .info-linha { flex:1 1 calc(100% - 50px); } .linha-lista-modal select { flex:1 1 140px; } .linha-lista-modal .admin-acoes { width:100%; justify-content:flex-start; } }
 .linha-lista-modal img { width:32px; height:32px; border-radius:50%; object-fit:cover; }
 .linha-lista-modal .info-linha { flex:1; min-width:0; }
 .linha-lista-modal .info-linha .nome-linha { color:#dbdee1; font-weight:600; }
@@ -1265,6 +1303,11 @@ html, body { height:100%; overflow:hidden; }
 .linha-lista-modal button { background:#404249; border:none; color:#dbdee1; font-size:11.5px; padding:6px 9px; border-radius:6px; cursor:pointer; margin-left:4px; }
 .linha-lista-modal button.ativo-toggle { background:#3ba55c; color:#fff; }
 .linha-lista-modal button.perigo-toggle { background:#da373c; color:#fff; }
+.toast-site { position:fixed; right:22px; bottom:22px; z-index:10000; background:#111214; color:#fff; border:1px solid #3a3c41; box-shadow:0 12px 35px #0008; border-radius:10px; padding:11px 14px; font-size:13px; opacity:0; transform:translateY(10px); pointer-events:none; transition:.2s ease; }
+.toast-site.aberto { opacity:1; transform:translateY(0); }
+.toast-site.sucesso { border-color:#3ba55c66; }
+.toast-site.erro { border-color:#da373c88; }
+
 .campo-busca-modal { margin-bottom:12px; }
 
 .card-descoberta { display:flex; align-items:center; gap:12px; padding:10px; border-radius:8px; background:#232428; margin-bottom:8px; }
@@ -1323,7 +1366,7 @@ html, body { height:100%; overflow:hidden; }
 """
 
 CORPO_APP_SHELL = """
-<div id="telaCarregamento" class="tela-carregamento"><img class="logo-loading" src="/static/logo.png"><div class="loading-titulo">NOVO GG</div><div class="loading-sub">Conectando ao servidor...</div><div class="loading-spinner"></div></div>
+<div id="telaCarregamento" class="tela-carregamento"><img class="logo-loading" src="/static/logo.png"><div class="loading-titulo">NOVO GG</div><div class="loading-sub">Conectando ao servidor...</div><div class="loading-progress">Preparando sua conta e seus dados...</div><div class="loading-spinner"></div></div><div id="toastSite" class="toast-site"></div>
 <div id="appShell">
   <div id="railServidores"></div>
   <div id="segundaColuna"></div>
@@ -1539,6 +1582,15 @@ CORPO_APP_SHELL = """
   </div>
 </div>
 
+<!-- Modal: criar grupo -->
+<div class="fundo-modal" id="modalCriarGrupo">
+  <div class="caixa-modal grande">
+    <div class="topo-modal"><h2>Novo grupo</h2><p>Escolha até 9 amigos. Você também participa, totalizando no máximo 10 pessoas.</p></div>
+    <div class="corpo-modal"><div id="listaEscolhaGrupo" class="lista-lateral" style="max-height:42vh;overflow:auto;"></div><div class="mensagem-modal" id="msgCriarGrupo"></div></div>
+    <div class="linha-botoes-modal"><button class="botao-primario-modal" style="width:auto;padding:10px 16px;" onclick="criarGrupoSelecionado()">Criar grupo</button><button class="cancelar-modal" onclick="fecharModal('modalCriarGrupo')">Cancelar</button></div>
+  </div>
+</div>
+
 <!-- Modal: Amigo IA -->
 <div class="fundo-modal" id="modalAmigoIA">
   <div class="caixa-modal grande">
@@ -1627,12 +1679,15 @@ const MEU_USUARIO = %%USUARIO_JSON%%;
 const EMOJIS_REACAO = %%EMOJIS_REACAO%%;
 
 let estado = {
-    contexto: null, abaAmigos: 'online', dmAtual: null, servidorAtual: null,
+    contexto: null, abaAmigos: 'online', dmAtual: null, grupoAtual: null, servidorAtual: null,
     canalAtual: null, tipoCanalAtual: null, nomeCanalAtual: '', servidoresCache: [],
     detalheServidorCache: null, souAdminGlobal: false,
 };
 
 function escaparHtml(t) { const d = document.createElement('div'); d.textContent = (t == null ? '' : String(t)); return d.innerHTML; }
+function toastSite(texto, tipo='sucesso'){ const t=document.getElementById('toastSite'); if(!t)return; t.textContent=texto; t.className='toast-site aberto '+tipo; clearTimeout(window._toastTimer); window._toastTimer=setTimeout(()=>t.classList.remove('aberto'),2400); }
+function instalarFallbackImagens(){ document.querySelectorAll('img').forEach(img=>{ if(img.dataset.fallback)return; img.dataset.fallback='1'; img.addEventListener('error',()=>{ if(img.src.endsWith('/static/logo.png'))return; img.src='/static/logo.png'; }); }); }
+
 function fecharModal(id) { document.getElementById(id).classList.remove('aberto'); }
 function abrirModal(id) { document.getElementById(id).classList.add('aberto'); }
 function aplicarEmojisTexto(texto, listaEmojis) {
@@ -1684,9 +1739,9 @@ async function carregarRodapeUsuario() {
     div.id = 'rodapeUsuarioFixo';
     div.className = 'rodape-usuario';
     div.innerHTML = `
-        <img src="${d.avatar}" onclick="abrirModalPerfil()">
+        <img src="${d.avatar}" onerror="this.onerror=null;this.src='/static/logo.png'" onclick="abrirModalPerfil()">
         <div class="info-rodape" onclick="abrirModalPerfil()">
-            <div class="nome-rodape">${escaparHtml(d.usuario)}${d.premium?'<img class="icon-badge" src="/static/icons/nitro.svg" alt="Nitro" title="Nitro">':''}${d.eh_admin?'<img class="icon-badge" src="/static/icons/admin.svg" alt="Administrador" title="Administrador">':''}</div>
+            <div class="nome-rodape">${escaparHtml(d.usuario)}${d.premium?'<img class="icon-badge" src="/static/icons/nitro.png" alt="Nitro" title="Nitro">':''}${d.eh_admin?'<img class="icon-badge" src="/static/icons/admin.svg" alt="Administrador" title="Administrador">':''}</div>
             <div class="id-rodape">#${d.id_publico}${d.status_texto ? ' - ' + escaparHtml(d.status_texto) : ''}</div>
         </div>
         <button class="botao-sair-rodape" onclick="window.location.href='/sair'" title="Sair">&#9211;</button>`;
@@ -1744,7 +1799,7 @@ async function abrirPerfilDe(usuario) {
     if (p.tag) tags.push(`<span class="tag-especial-perfil" style="background:${p.tag_cor}33;color:${p.tag_cor}">${escaparHtml(p.tag)}</span>`);
     document.getElementById('caixaVerPerfil').innerHTML = `
         <div class="perfil-banner" style="${p.banner ? 'background-image:url(\''+p.banner+'\')' : ''}"></div>
-        <div class="perfil-avatar-wrap"><img src="${p.avatar}"></div>
+        <div class="perfil-avatar-wrap"><img src="${p.avatar}" onerror="this.onerror=null;this.src='/static/logo.png'"></div>
         <div class="perfil-corpo-info">
             <div class="nome-perfil-popover">${escaparHtml(p.usuario)}</div>
             <div class="id-perfil-popover">#${p.id_publico} ${p.online ? '- Online' : ''}</div>
@@ -1759,15 +1814,15 @@ async function abrirPerfilDe(usuario) {
 // Navegacao geral
 // ---------------------------------------------------------------
 function abrirVisaoAmigos() {
-    estado.contexto = 'amigos'; estado.servidorAtual = null; estado.canalAtual = null; estado.dmAtual = null;
+    estado.contexto = 'amigos'; estado.servidorAtual = null; estado.canalAtual = null; estado.dmAtual = null; estado.grupoAtual = null;
     fecharPainelMembros(); montarTudo();
 }
 async function abrirDM(usuario) {
-    estado.contexto = 'dm'; estado.dmAtual = usuario; estado.servidorAtual = null; estado.canalAtual = null;
+    estado.contexto = 'dm'; estado.dmAtual = usuario; estado.grupoAtual = null; estado.servidorAtual = null; estado.canalAtual = null;
     fecharPainelMembros(); montarTudo();
 }
 async function abrirServidor(servidorId) {
-    estado.contexto = 'servidor'; estado.servidorAtual = servidorId; estado.canalAtual = null; estado.tipoCanalAtual = null; estado.dmAtual = null;
+    estado.contexto = 'servidor'; estado.servidorAtual = servidorId; estado.canalAtual = null; estado.tipoCanalAtual = null; estado.dmAtual = null; estado.grupoAtual = null;
     await montarTudo();
 }
 async function montarTudo() {
@@ -1789,6 +1844,7 @@ async function montarColunaAmigos(coluna) {
       <div class="topo-coluna">Encontrar ou iniciar uma conversa</div>
       <div class="busca-dm"><input type="text" id="buscaDmCampo" placeholder="Buscar amigo..." oninput="filtrarListaAmigos()"></div>
       <div class="abas-social"><div class="item-social" onclick="abrirAmigoIA()">Amigo IA</div>
+        <div class="item-social destaque-add" onclick="abrirModalCriarGrupo()">Criar grupo (até 10)</div>
         <div class="item-social ${estado.abaAmigos==='online'?'ativo':''}" onclick="mudarAbaAmigos('online')">Amigos online</div>
         <div class="item-social ${estado.abaAmigos==='todos'?'ativo':''}" onclick="mudarAbaAmigos('todos')">Todos os amigos</div>
         <div class="item-social ${estado.abaAmigos==='pendentes'?'ativo':''}" onclick="mudarAbaAmigos('pendentes')">Pendentes</div>
@@ -1806,15 +1862,17 @@ async function renderizarListaLateralAmigos() {
     const naoLidos = await (await fetch('/api/nao_lidos')).json();
     let lista = amigos;
     if (estado.abaAmigos === 'online') lista = amigos.filter(a => a.online);
-    if (!lista.length) { div.innerHTML = '<div class="vazio-lista-lateral">Ninguem por aqui ainda.</div>'; return; }
-    div.innerHTML = '<div class="linha-secao">' + (estado.abaAmigos === 'online' ? 'ONLINE' : 'TODOS OS AMIGOS') + ' - ' + lista.length + '</div>';
+    div.innerHTML = '';
+    if (lista.length) div.innerHTML += '<div class="linha-secao">' + (estado.abaAmigos === 'online' ? 'ONLINE' : 'TODOS OS AMIGOS') + ' - ' + lista.length + '</div>';
+    const grupos = await (await fetch('/api/grupos')).json();
+    if(grupos.length){ const titulo=document.createElement('div'); titulo.className='linha-secao'; titulo.textContent='GRUPOS'; div.appendChild(titulo); grupos.forEach(g=>{const item=document.createElement('div');item.className='item-amigo'+(estado.grupoAtual===g.id?' ativo':'');item.onclick=()=>abrirGrupo(g.id);item.innerHTML=`<div class="avatar-com-status"><img src="/static/logo.png"></div><div class="info-amigo"><div class="nome-amigo">${escaparHtml(g.nome)}</div><div class="sub-amigo">Grupo</div></div>`;div.appendChild(item);}); }
     lista.forEach(a => {
         const item = document.createElement('div');
         item.className = 'item-amigo' + (estado.dmAtual === a.usuario ? ' ativo' : '');
         item.onclick = () => abrirDM(a.usuario);
         const temNaoLido = (naoLidos.dms || []).includes(a.usuario);
         item.innerHTML = `
-          <div class="avatar-com-status ${a.premium?'premium':''}"><img src="${a.avatar}"><span class="bolinha-status ${a.online?'online':''}"></span></div>
+          <div class="avatar-com-status ${a.premium?'premium':''}"><img src="${a.avatar}" onerror="this.onerror=null;this.src='/static/logo.png'"><span class="bolinha-status ${a.online?'online':''}"></span></div>
           <div class="info-amigo"><div class="nome-amigo">${escaparHtml(a.usuario)}</div><div class="sub-amigo">${a.online?'Online':'Offline'}</div></div>
           ${temNaoLido ? '<span class="ponto-nao-lido-dm"></span>' : ''}`;
         div.appendChild(item);
@@ -1835,7 +1893,7 @@ async function montarColunaServidor(coluna) {
     const podeGerenciar = servidor.pode_gerenciar;
     coluna.innerHTML = `
       <div class="cabecalho-servidor-topo" onclick="alternarMenuServidor(event)">
-        ${escaparHtml(servidor.nome)} ${servidor.verificado?'<img class="icon-badge" src="/static/icons/verified.svg" alt="Verificado" title="Verificado">':''} ${servidor.impulsionado?'<img class="icon-badge" src="/static/icons/nitro.svg" alt="Nitro" title="Nitro">':''}
+        ${escaparHtml(servidor.nome)} ${servidor.verificado?'<img class="icon-badge" src="/static/icons/verificado.png" alt="Verificado" title="Verificado">':''} ${servidor.impulsionado?'<img class="icon-badge" src="/static/icons/nitro.png" alt="Nitro" title="Nitro">':''}
         <span class="seta-servidor">&#9662;</span>
         <div class="menu-flutuante-servidor" id="menuFlutuanteServidor">
           <div class="item-menu-flutuante" onclick="mostrarConvite()">&#128279; Convidar pessoas</div>
@@ -1982,15 +2040,23 @@ async function montarAreaPrincipal() {
         return;
     }
 
+    if (estado.contexto === 'grupo' && estado.grupoAtual) {
+        const g = await (await fetch('/api/grupos/'+estado.grupoAtual)).json();
+        if (!g.ok) { toastSite('Grupo não encontrado.', 'erro'); return; }
+        topo.innerHTML = `<span>👥</span><span>${escaparHtml(g.nome)}</span><span class="topico-canal-topo">${g.membros.length} participantes</span>`;
+        corpo.innerHTML = `<div class="lista-mensagens" id="listaMensagensGrupo"></div><div class="indicador-digitando" id="indicadorDigitandoGrupo"></div><div class="area-input-mensagem"><div class="caixa-input-msg"><button onclick="document.getElementById('arquivoMidiaGrupo').click()" title="Enviar foto, vídeo ou áudio">📎</button><input type="file" id="arquivoMidiaGrupo" accept="image/*,video/*,audio/*" hidden onchange="prepararMidiaGrupo()"><input type="text" id="campoMensagemGrupo" placeholder="Conversar no grupo" onkeydown="if(event.key==='Enter')enviarMensagemGrupo()"><button onclick="enviarMensagemGrupo()">➤</button></div><div id="previewMidiaGrupo"></div></div>`;
+        await carregarMensagensGrupo(); pollAtivo=setInterval(carregarMensagensGrupo,3000); return;
+    }
+
     if (estado.contexto === 'dm' && estado.dmAtual) {
         const alvo = await (await fetch('/api/usuarios/' + encodeURIComponent(estado.dmAtual))).json();
-        topo.innerHTML = `<img class="avatar-topo" src="${alvo.avatar}" onclick="abrirPerfilDe('${escaparHtml(estado.dmAtual)}')" style="cursor:pointer;"><span onclick="abrirPerfilDe('${escaparHtml(estado.dmAtual)}')" style="cursor:pointer;">${escaparHtml(estado.dmAtual)}</span>
+        topo.innerHTML = `<img class="avatar-topo" onerror="this.onerror=null;this.src='/static/logo.png'" src="${alvo.avatar}" onclick="abrirPerfilDe('${escaparHtml(estado.dmAtual)}')" style="cursor:pointer;"><span onclick="abrirPerfilDe('${escaparHtml(estado.dmAtual)}')" style="cursor:pointer;">${escaparHtml(estado.dmAtual)}</span>
             <div class="acoes-topo"><span onclick="iniciarChamadaDM(false)" title="Ligar">&#128222;</span><span onclick="iniciarChamadaDM(true)" title="Chamada de video">&#128249;</span></div>`;
         corpo.innerHTML = `
           <div class="lista-mensagens" id="listaMensagensDM"></div>
           <div class="indicador-digitando" id="indicadorDigitandoDM"></div>
           <div class="area-input-mensagem"><div class="caixa-input-msg">
-             <button onclick="document.getElementById('arquivoMidiaDM').click()" title="Enviar foto, video ou audio">&#128206;</button>
+             <button onclick="document.getElementById('arquivoMidiaDM').click()" title="Enviar foto, vídeo ou áudio">📎</button><button id="botaoGravarAudioDM" onclick="alternarGravacaoAudioDM()" title="Gravar áudio">🎙️</button>
              <input type="file" id="arquivoMidiaDM" accept="image/*,video/*,audio/*" hidden onchange="prepararMidiaDM()">
              <input type="text" id="campoMensagemDM" placeholder="Conversar com @${escaparHtml(estado.dmAtual)}" onkeydown="if(event.key==='Enter')enviarMensagemDM()" oninput="avisarDigitando('dm', '${escaparHtml(estado.dmAtual)}')">
              <button onclick="enviarMensagemDM()">&#10148;</button>
@@ -2021,7 +2087,7 @@ async function montarAreaPrincipal() {
                 <div class="acoes-topo"><span onclick="alternarPainelMembros()" title="Membros">&#128101;</span></div>`;
             corpo.innerHTML = `
               <div class="painel-voz-central">
-                <div class="grade-voz-participantes" id="gradeVozParticipantes"></div>
+                <div class="grade-voz-participantes" id="gradeVozParticipantes"></div><video id="videoCameraLocalVoz" autoplay playsinline muted style="display:none;width:220px;height:140px;border-radius:12px;object-fit:cover;background:#000;"></video>
                 <div class="botoes-controle-voz" id="botoesControleVoz">
                   <button class="entrar" onclick="entrarCanalVoz(${estado.canalAtual})" title="Entrar">&#128222;</button>
                 </div>
@@ -2056,7 +2122,7 @@ async function renderizarPainelAmigosCentral() {
             html += `<div class="contador-aba">PEDIDOS RECEBIDOS - ${dados.recebidos.length}</div>`;
             dados.recebidos.forEach(p => {
                 html += `<div class="linha-pendente">
-                    <div class="avatar-com-status"><img src="${p.avatar}"></div>
+                    <div class="avatar-com-status"><img src="${p.avatar}" onerror="this.onerror=null;this.src='/static/logo.png'"></div>
                     <div class="info-amigo"><div class="nome-amigo">${escaparHtml(p.usuario)}</div><div class="sub-amigo">Quer ser seu amigo</div></div>
                     <div class="acoes-item-amigo">
                         <button class="botao-mini-circulo" onclick="responderPedido('${escaparHtml(p.usuario)}', true)" title="Aceitar">&#10003;</button>
@@ -2068,7 +2134,7 @@ async function renderizarPainelAmigosCentral() {
             html += `<div class="contador-aba" style="margin-top:20px;">PEDIDOS ENVIADOS - ${dados.enviados.length}</div>`;
             dados.enviados.forEach(p => {
                 html += `<div class="linha-pendente">
-                    <div class="avatar-com-status"><img src="${p.avatar}"></div>
+                    <div class="avatar-com-status"><img src="${p.avatar}" onerror="this.onerror=null;this.src='/static/logo.png'"></div>
                     <div class="info-amigo"><div class="nome-amigo">${escaparHtml(p.usuario)}</div><div class="sub-amigo">Pedido enviado</div></div>
                     <div class="acoes-item-amigo"><button class="botao-mini-circulo recusar" onclick="cancelarPedidoEnviado('${escaparHtml(p.usuario)}')" title="Cancelar">&times;</button></div></div>`;
             });
@@ -2081,7 +2147,7 @@ async function renderizarPainelAmigosCentral() {
         const bloqueados = await (await fetch('/api/bloqueados')).json();
         if (!bloqueados.length) { div.innerHTML = '<div class="vazio-lista-lateral">Ninguem bloqueado.</div>'; return; }
         div.innerHTML = bloqueados.map(b => `<div class="linha-pendente">
-            <div class="avatar-com-status"><img src="${b.avatar}"></div>
+            <div class="avatar-com-status"><img src="${b.avatar}" onerror="this.onerror=null;this.src='/static/logo.png'"></div>
             <div class="info-amigo"><div class="nome-amigo">${escaparHtml(b.usuario)}</div></div>
             <div class="acoes-item-amigo"><button class="botao-mini-circulo" onclick="desbloquearUsuario('${escaparHtml(b.usuario)}')">Desbloquear</button></div></div>`).join('');
         return;
@@ -2091,7 +2157,7 @@ async function renderizarPainelAmigosCentral() {
     if (!lista.length) { div.innerHTML = '<div class="vazio-lista-lateral">Ninguem por aqui ainda. Adicione um amigo!</div>'; return; }
     div.innerHTML = `<div class="contador-aba">${estado.abaAmigos==='online'?'ONLINE':'TODOS OS AMIGOS'} - ${lista.length}</div>` +
         lista.map(a => `<div class="linha-pendente" style="cursor:pointer;" onclick="abrirDM('${escaparHtml(a.usuario)}')">
-            <div class="avatar-com-status ${a.premium?'premium':''}"><img src="${a.avatar}"><span class="bolinha-status ${a.online?'online':''}"></span></div>
+            <div class="avatar-com-status ${a.premium?'premium':''}"><img src="${a.avatar}" onerror="this.onerror=null;this.src='/static/logo.png'"><span class="bolinha-status ${a.online?'online':''}"></span></div>
             <div class="info-amigo"><div class="nome-amigo">${escaparHtml(a.usuario)}</div><div class="sub-amigo">${a.online?'Online':'Offline'}</div></div>
             <div class="acoes-item-amigo">
                 <button class="botao-mini-circulo" onclick="event.stopPropagation();abrirDM('${escaparHtml(a.usuario)}')" title="Mensagem">&#128172;</button>
@@ -2128,6 +2194,33 @@ async function desbloquearUsuario(usuario) {
 }
 
 // ---------------------------------------------------------------
+// Grupos de conversa (até 10 pessoas)
+// ---------------------------------------------------------------
+let grupoSelecionados = new Set();
+let gravadorAudioDM = null, partesAudioDM = [], gravandoAudioDM = false;
+async function abrirModalCriarGrupo(){
+    grupoSelecionados = new Set();
+    const box=document.getElementById('listaEscolhaGrupo'); const msg=document.getElementById('msgCriarGrupo');
+    msg.textContent=''; abrirModal('modalCriarGrupo');
+    const amigos=await (await fetch('/api/amigos')).json();
+    box.innerHTML=amigos.map(a=>`<label class="item-amigo" style="cursor:pointer;"><input type="checkbox" value="${escaparHtml(a.usuario)}" onchange="alternarMembroGrupo(this)" style="margin-right:8px;"><div class="avatar-com-status"><img src="${a.avatar}" onerror="this.onerror=null;this.src='/static/logo.png'"></div><div class="info-amigo"><div class="nome-amigo">${escaparHtml(a.usuario)}</div><div class="sub-amigo">${a.online?'Online':'Offline'}</div></div></label>`).join('') || '<div class="vazio-lista-lateral">Adicione amigos primeiro.</div>';
+}
+function alternarMembroGrupo(el){ if(el.checked) grupoSelecionados.add(el.value); else grupoSelecionados.delete(el.value); if(grupoSelecionados.size>9){el.checked=false;grupoSelecionados.delete(el.value);toastSite('O limite é 9 amigos + você.','erro');} }
+async function criarGrupoSelecionado(){
+    const nomes=[...grupoSelecionados]; const msg=document.getElementById('msgCriarGrupo');
+    if(!nomes.length){msg.textContent='Escolha pelo menos 1 amigo.';return;}
+    const nome=prompt('Nome do grupo:','Novo grupo'); if(!nome)return;
+    const r=await fetch('/api/grupos/criar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({nome, membros:nomes})}); const d=await r.json();
+    if(!d.ok){msg.textContent=d.erro||'Não foi possível criar.';return;}
+    fecharModal('modalCriarGrupo'); estado.contexto='grupo'; estado.grupoAtual=d.id; estado.dmAtual=null; await montarTudo(); toastSite('Grupo criado com sucesso.','sucesso');
+}
+async function abrirGrupo(id){estado.contexto='grupo';estado.grupoAtual=id;estado.dmAtual=null;estado.servidorAtual=null;await montarTudo();}
+async function carregarMensagensGrupo(){ if(!estado.grupoAtual)return; const r=await fetch('/api/grupos/'+estado.grupoAtual+'/mensagens'); const d=await r.json(); const div=document.getElementById('listaMensagensGrupo'); if(!div||!d.ok)return; div.innerHTML=d.mensagens.length?d.mensagens.map(m=>renderizarGrupoMensagem(m,'grupo',estado.grupoAtual)).join(''):'<div class="vazio-mensagens">Esse é o começo do grupo.</div>'; div.scrollTop=div.scrollHeight; }
+async function enviarMensagemGrupo(){const c=document.getElementById('campoMensagemGrupo');const texto=c.value.trim();if(!texto)return;c.value='';const r=await fetch('/api/grupos/'+estado.grupoAtual+'/enviar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({texto})});const d=await r.json();if(!d.ok)toastSite(d.erro||'Não foi possível enviar.','erro');else toastSite('Mensagem enviada.','sucesso');carregarMensagensGrupo();}
+async function prepararMidiaGrupo(){const input=document.getElementById('arquivoMidiaGrupo'),box=document.getElementById('previewMidiaGrupo'),file=input.files[0];if(!file){box.innerHTML='';return;}const url=URL.createObjectURL(file);let el=file.type.startsWith('image/')?`<img class="midia-preview" src="${url}">`:file.type.startsWith('video/')?`<video class="midia-preview" src="${url}" controls playsinline></video>`:`<audio class="midia-audio" src="${url}" controls></audio>`;box.innerHTML=el+`<button class="botao-mini-circulo" onclick="enviarMidiaGrupo()">Enviar</button>`;}
+async function enviarMidiaGrupo(){const input=document.getElementById('arquivoMidiaGrupo'),file=input.files[0];if(!file)return;const form=new FormData();form.append('arquivo',file);const r=await fetch('/api/grupos/'+estado.grupoAtual+'/midia',{method:'POST',body:form});const d=await r.json();if(!d.ok)toastSite(d.erro||'Falha ao enviar.','erro');input.value='';document.getElementById('previewMidiaGrupo').innerHTML='';carregarMensagensGrupo();}
+
+// ---------------------------------------------------------------
 // Mensagens diretas (DM)
 // ---------------------------------------------------------------
 async function carregarMensagensDM() {
@@ -2142,13 +2235,13 @@ async function carregarMensagensDM() {
 }
 function renderizarGrupoMensagem(m, tipo, alvo) {
     const hora = new Date(m.criado_em).toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'});
-    const podeEditar = m.minha;
-    const podeExcluir = m.minha || m.pode_gerenciar;
+    const podeEditar = m.minha && tipo !== 'grupo';
+    const podeExcluir = tipo !== 'grupo' && (m.minha || m.pode_gerenciar);
     const listaEmojis = tipo === 'canal' ? (window._emojisServidorCache || []) : [];
-    const reacoesHtml = (m.reacoes || []).map(rr => `<span class="pilula-reacao ${rr.reagi?'minha':''}" onclick="reagirMensagem('${tipo}', ${m.id}, '${rr.emoji}')">${rr.emoji} ${rr.qtd}</span>`).join('');
-    const seletorRapido = EMOJIS_REACAO.map(e => `<span onclick="reagirMensagem('${tipo}', ${m.id}, '${e}'); fecharSeletorReacao(${m.id})">${e}</span>`).join('');
+    const reacoesHtml = tipo === 'grupo' ? '' : (m.reacoes || []).map(rr => `<span class="pilula-reacao ${rr.reagi?'minha':''}" onclick="reagirMensagem('${tipo}', ${m.id}, '${rr.emoji}')">${rr.emoji} ${rr.qtd}</span>`).join('');
+    const seletorRapido = tipo === 'grupo' ? '' : EMOJIS_REACAO.map(e => `<span onclick="reagirMensagem('${tipo}', ${m.id}, '${e}'); fecharSeletorReacao(${m.id})">${e}</span>`).join('');
     return `<div class="grupo-mensagem" id="msg-${tipo}-${m.id}">
-        <img class="avatar-msg" src="${m.avatar}" onclick="abrirPerfilDe('${escaparHtml(m.remetente)}')">
+        <img class="avatar-msg" onerror="this.onerror=null;this.src='/static/logo.png'" src="${m.avatar}" onclick="abrirPerfilDe('${escaparHtml(m.remetente)}')">
         <div class="conteudo-msg-grupo">
             <div class="cabecalho-msg">
                 <span class="autor-msg" onclick="abrirPerfilDe('${escaparHtml(m.remetente)}')">${escaparHtml(m.nome_exibicao || m.remetente)}</span>
@@ -2161,7 +2254,7 @@ function renderizarGrupoMensagem(m, tipo, alvo) {
         </div>
         <div class="seletor-reacao-rapida" id="seletor-${tipo}-${m.id}">${seletorRapido}</div>
         <div class="acoes-mensagem">
-            <button onclick="abrirSeletorReacao('${tipo}', ${m.id})" title="Reagir">&#128512;</button>
+            ${tipo !== 'grupo' ? '<button onclick="abrirSeletorReacao(\''+tipo+'\', '+m.id+')" title="Reagir">&#128512;</button>' : ''}
             ${podeEditar ? '<button onclick="iniciarEdicaoMensagem(\''+tipo+'\', '+m.id+')" title="Editar">&#9998;</button>' : ''}
             ${tipo === 'canal' && m.pode_gerenciar !== undefined ? '<button onclick="alternarFixarMensagem('+m.id+', '+(m.fixada?'false':'true')+')" title="Fixar">&#128204;</button>' : ''}
             ${podeExcluir ? '<button onclick="excluirMensagem(\''+tipo+'\', '+m.id+', '+(alvo?"'"+escaparHtml(String(alvo))+"'":'null')+')" title="Excluir">&#128465;</button>' : ''}
@@ -2180,7 +2273,7 @@ document.addEventListener('click', (ev) => {
 });
 async function reagirMensagem(tipo, id, emoji) {
     await fetch('/api/mensagens/reagir', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ tipo, mensagem_id: id, emoji }) });
-    if (tipo === 'canal') carregarMensagensCanal(); else carregarMensagensDM();
+    if (tipo === 'canal') carregarMensagensCanal(); else if (tipo === 'grupo') carregarMensagensGrupo(); else carregarMensagensDM();
 }
 function iniciarEdicaoMensagem(tipo, id) {
     const div = document.getElementById('texto-' + tipo + '-' + id);
@@ -2193,13 +2286,13 @@ async function confirmarEdicaoMensagem(tipo, id) {
     if (!novoTexto) return;
     const rota = tipo === 'canal' ? '/api/canais/mensagens/' + id + '/editar' : '/api/dm/mensagens/' + id + '/editar';
     await fetch(rota, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ texto: novoTexto }) });
-    if (tipo === 'canal') carregarMensagensCanal(); else carregarMensagensDM();
+    if (tipo === 'canal') carregarMensagensCanal(); else if (tipo === 'grupo') carregarMensagensGrupo(); else carregarMensagensDM();
 }
 async function excluirMensagem(tipo, id) {
     if (!confirm('Excluir esta mensagem?')) return;
     const rota = tipo === 'canal' ? '/api/canais/mensagens/' + id + '/excluir' : '/api/dm/mensagens/' + id + '/excluir';
     await fetch(rota, { method:'POST' });
-    if (tipo === 'canal') carregarMensagensCanal(); else carregarMensagensDM();
+    if (tipo === 'canal') carregarMensagensCanal(); else if (tipo === 'grupo') carregarMensagensGrupo(); else carregarMensagensDM();
 }
 async function alternarFixarMensagem(id, fixar) {
     await fetch('/api/canais/mensagens/' + id + '/fixar', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ fixar }) });
@@ -2213,8 +2306,20 @@ async function enviarMensagemDM() {
     const r = await fetch('/api/dm/' + encodeURIComponent(estado.dmAtual) + '/enviar', {
         method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ texto }) });
     const d = await r.json();
-    if (!d.ok) alert(d.erro || 'Nao foi possivel enviar.');
+    if (!d.ok) toastSite(d.erro || 'Não foi possível enviar.', 'erro');
+    else toastSite('Mensagem enviada.', 'sucesso');
     carregarMensagensDM();
+}
+
+async function alternarGravacaoAudioDM(){
+    if(gravandoAudioDM){ gravadorAudioDM.stop(); return; }
+    try{
+        const stream=await navigator.mediaDevices.getUserMedia({audio:true}); partesAudioDM=[];
+        gravadorAudioDM=new MediaRecorder(stream,{mimeType:'audio/webm'});
+        gravadorAudioDM.ondataavailable=e=>{if(e.data.size)partesAudioDM.push(e.data);};
+        gravadorAudioDM.onstop=async()=>{stream.getTracks().forEach(t=>t.stop());gravandoAudioDM=false;const blob=new Blob(partesAudioDM,{type:'audio/webm'});const file=new File([blob],'gravacao.webm',{type:'audio/webm'});const form=new FormData();form.append('arquivo',file);const r=await fetch('/api/dm/'+encodeURIComponent(estado.dmAtual)+'/midia',{method:'POST',body:form});const d=await r.json();if(!d.ok)toastSite(d.erro||'Não foi possível enviar o áudio.','erro');else toastSite('Áudio enviado.','sucesso');document.getElementById('botaoGravarAudioDM').textContent='🎙️';carregarMensagensDM();};
+        gravadorAudioDM.start();gravandoAudioDM=true;document.getElementById('botaoGravarAudioDM').textContent='⏹️';toastSite('Gravando áudio... clique novamente para enviar.','sucesso');
+    }catch(e){toastSite('Não foi possível acessar o microfone.','erro');}
 }
 
 async function prepararMidiaDM() {
@@ -2230,7 +2335,7 @@ async function enviarMidiaDM(){
     const input=document.getElementById('arquivoMidiaDM'); const file=input.files[0]; if(!file||!estado.dmAtual)return;
     const form=new FormData(); form.append('arquivo',file);
     const r=await fetch('/api/dm/'+encodeURIComponent(estado.dmAtual)+'/midia',{method:'POST',body:form}); const d=await r.json();
-    if(!d.ok) alert(d.erro||'Nao foi possivel enviar a midia.');
+    if(!d.ok) toastSite(d.erro||'Não foi possível enviar a mídia.','erro'); else toastSite('Mídia enviada.','sucesso');
     input.value=''; document.getElementById('previewMidiaDM').innerHTML=''; carregarMensagensDM();
 }
 
@@ -2274,7 +2379,7 @@ async function abrirFixadas() {
     const r = await fetch('/api/canais/' + estado.canalAtual + '/fixadas');
     const d = await r.json();
     document.getElementById('listaFixadas').innerHTML = (d.mensagens || []).map(m => `
-        <div class="linha-lista-modal"><img src="${m.avatar}"><div class="info-linha"><div class="nome-linha">${escaparHtml(m.remetente)}</div><div class="sub-linha">${escaparHtml(m.conteudo)}</div></div>
+        <div class="linha-lista-modal"><img src="${m.avatar}" onerror="this.onerror=null;this.src='/static/logo.png'"><div class="info-linha"><div class="nome-linha">${escaparHtml(m.remetente)}</div><div class="sub-linha">${escaparHtml(m.conteudo)}</div></div>
         <button onclick="alternarFixarMensagem(${m.id}, false); fecharModal('modalFixadas')">Desafixar</button></div>`).join('') || '<div class="vazio-lista-lateral">Nenhuma mensagem fixada.</div>';
     abrirModal('modalFixadas');
 }
@@ -2322,7 +2427,7 @@ async function renderizarPainelMembrosServidor() {
     servidor.membros.forEach(m => {
         const badges = (m.cargos || []).map(c => `<span class="badge-cargo-membro" style="background:${c.cor}">${escaparHtml(c.nome)}</span>`).join('');
         html += `<div class="linha-membro-servidor" onclick="abrirPerfilDe('${escaparHtml(m.usuario)}')">
-            <div class="avatar-com-status ${m.premium?'premium':''}"><img src="${m.avatar}"><span class="bolinha-status ${m.online?'online':''}"></span></div>
+            <div class="avatar-com-status ${m.premium?'premium':''}"><img src="${m.avatar}" onerror="this.onerror=null;this.src='/static/logo.png'"><span class="bolinha-status ${m.online?'online':''}"></span></div>
             <span class="nome-membro-serv">${escaparHtml(m.apelido || m.usuario)}${badges}</span></div>`;
     });
     painel.innerHTML = html;
@@ -2381,8 +2486,8 @@ async function abrirDescoberta() {
     const servidores = await r.json();
     document.getElementById('listaDescoberta').innerHTML = servidores.map(s => `
         <div class="card-descoberta">
-            <img src="${s.icone || ''}">
-            <div class="info-descoberta"><div class="nome-descoberta">${escaparHtml(s.nome)} ${s.verificado?'<img class="icon-badge" src="/static/icons/verified.svg" alt="Verificado" title="Verificado">':''}</div><div class="sub-descoberta">${s.membros} membros ${s.descricao ? '- ' + escaparHtml(s.descricao) : ''}</div></div>
+            <img src="${s.icone || '/static/logo.png'}" onerror="this.onerror=null;this.src='/static/logo.png'">
+            <div class="info-descoberta"><div class="nome-descoberta">${escaparHtml(s.nome)} ${s.verificado?'<img class="icon-badge" src="/static/icons/verificado.png" alt="Verificado" title="Verificado">':''}</div><div class="sub-descoberta">${s.membros} membros ${s.descricao ? '- ' + escaparHtml(s.descricao) : ''}</div></div>
             <button class="botao-mini-circulo" style="width:auto; padding:0 12px; border-radius:6px;" onclick="entrarServidorPublico(${s.id})">Entrar</button>
         </div>`).join('') || '<div class="vazio-lista-lateral">Nenhum servidor publico no momento.</div>';
     abrirModal('modalDescobrir');
@@ -2403,7 +2508,7 @@ function mostrarConvite() {
 }
 function copiarCodigoConvite() {
     const texto = document.getElementById('codigoConviteTexto').textContent;
-    navigator.clipboard.writeText(texto).then(() => alert('Codigo copiado!'));
+    navigator.clipboard.writeText(texto).then(() => toastSite('Código copiado para a área de transferência.','sucesso')).catch(() => toastSite('Não foi possível copiar o código.','erro'));
 }
 function mudarAbaConfigServidor(nome, botao) {
     document.querySelectorAll('.abas-modal-topo button').forEach(b => b.classList.remove('ativa'));
@@ -2467,7 +2572,7 @@ async function excluirEmojiServidor(id) {
 async function carregarMembrosConfig() {
     const servidor = await (await fetch('/api/servidores/' + estado.servidorAtual)).json();
     document.getElementById('listaMembrosConfig').innerHTML = servidor.membros.map(m => `
-        <div class="linha-lista-modal"><img src="${m.avatar}"><div class="info-linha"><div class="nome-linha">${escaparHtml(m.apelido || m.usuario)}</div><div class="sub-linha">${m.online?'Online':'Offline'}</div></div>
+        <div class="linha-lista-modal"><img src="${m.avatar}" onerror="this.onerror=null;this.src='/static/logo.png'"><div class="info-linha"><div class="nome-linha">${escaparHtml(m.apelido || m.usuario)}</div><div class="sub-linha">${m.online?'Online':'Offline'}</div></div>
         ${m.usuario !== MEU_USUARIO ? '<button class="perigo-toggle" onclick="removerMembroServidor(\''+escaparHtml(m.usuario)+'\')">Expulsar</button><button class="perigo-toggle" onclick="banirMembroServidor(\''+escaparHtml(m.usuario)+'\')">Banir</button>' : ''}</div>`).join('');
 }
 async function removerMembroServidor(usuario) {
@@ -2605,13 +2710,15 @@ async function renderizarAdminUsuarios() {
     const filtrados = usuarios.filter(u => u.usuario.toLowerCase().includes(termo));
     document.getElementById('listaAdminUsuarios').innerHTML = filtrados.map(u => `
         <div class="linha-lista-modal">
-            <img src="${u.avatar}">
+            <img src="${u.avatar}" onerror="this.onerror=null;this.src='/static/logo.png'">
             <div class="info-linha"><div class="nome-linha">${escaparHtml(u.usuario)} #${u.id_publico}</div><div class="sub-linha">${u.eh_admin?'Administrador':(u.online?'Online':'Offline')}</div></div>
-            <select onchange="atribuirTagUsuario('${escaparHtml(u.usuario)}', this.value)">${opcoesTags.replace('value="'+(u.tag||'###')+'"', 'value="'+(u.tag||'###')+'" selected')}</select>
-            <button onclick="alterarIdUsuario('${escaparHtml(u.usuario)}', ${u.id_publico})">ID</button>
-            <button class="${u.perfil_publico_autorizado?'ativo-toggle':''}" onclick="autorizarPerfilUsuario('${escaparHtml(u.usuario)}', ${!u.perfil_publico_autorizado})">${u.perfil_publico_autorizado?'Perfil publico':'Autorizar perfil'}</button>
-            <button class="${u.premium?'ativo-toggle':''}" onclick="alternarPremiumUsuario('${escaparHtml(u.usuario)}', ${!u.premium})">${u.premium?'Recurso liberado':'Liberar recurso extra'}</button>
-            <button class="perigo-toggle" onclick="alternarBanUsuario('${escaparHtml(u.usuario)}', ${!u.banido})" ${u.eh_admin?'disabled':''}>${u.banido?'Desbanir':'Banir'}</button>
+            <div class="admin-acoes">
+              <select onchange="atribuirTagUsuario('${escaparHtml(u.usuario)}', this.value)">${opcoesTags.replace('value="'+(u.tag||'###')+'"', 'value="'+(u.tag||'###')+'" selected')}</select>
+              <button onclick="alterarIdUsuario('${escaparHtml(u.usuario)}', ${u.id_publico})">ID</button>
+              <button class="${u.perfil_publico_autorizado?'ativo-toggle':''}" onclick="autorizarPerfilUsuario('${escaparHtml(u.usuario)}', ${!u.perfil_publico_autorizado})">${u.perfil_publico_autorizado?'Perfil público':'Autorizar perfil'}</button>
+              <button class="${u.premium?'ativo-toggle':''}" onclick="alternarPremiumUsuario('${escaparHtml(u.usuario)}', ${!u.premium})">${u.premium?'Recurso liberado':'Liberar recurso extra'}</button>
+              <button class="perigo-toggle" onclick="alternarBanUsuario('${escaparHtml(u.usuario)}', ${!u.banido})" ${u.eh_admin?'disabled':''}>${u.banido?'Desbanir':'Banir'}</button>
+            </div>
         </div>`).join('') || '<div class="vazio-lista-lateral">Nenhum usuario encontrado.</div>';
 }
 async function atribuirTagUsuario(usuario, tag) {
@@ -2637,7 +2744,7 @@ async function renderizarAdminServidores() {
     const filtrados = servidores.filter(s => s.nome.toLowerCase().includes(termo));
     document.getElementById('listaAdminServidores').innerHTML = filtrados.map(s => `
         <div class="linha-lista-modal">
-            <img src="${s.icone || ''}">
+            <img src="${s.icone || '/static/logo.png'}" onerror="this.onerror=null;this.src='/static/logo.png'">
             <div class="info-linha"><div class="nome-linha">${escaparHtml(s.nome)} <span style="color:#949ba4">#${s.id}</span></div><div class="sub-linha">dono: ${escaparHtml(s.dono)} - ${s.membros} membros - ${s.publico_autorizado?'publico autorizado':(s.publico?'aguardando autorizacao':'privado')}</div></div>
             <button class="${s.publico_autorizado?'ativo-toggle':''}" onclick="alternarPublicoServidorAdmin(${s.id}, ${!s.publico_autorizado})">${s.publico_autorizado?'Publico autorizado':'Autorizar publico'}</button>
             <button class="${s.verificado?'ativo-toggle':''}" onclick="alternarVerificarServidorAdmin(${s.id}, ${!s.verificado})">Verificado</button>
@@ -2665,12 +2772,14 @@ async function excluirServidorAdmin(id) {
 // ---------------------------------------------------------------
 let vozConexoes = {};
 let vozStreamLocal = null;
+let vozVideoStream = null;
 let vozTelaStream = null;
 let vozCanalAtualId = null;
 let vozPollSinais = null;
 let vozMutado = false;
 let vozSurdo = false;
 let vozCompartilhandoTela = false;
+let vozComCamera = false;
 let usuariosFalando = new Set();
 let vozAnalisadores = {};
 
@@ -2703,6 +2812,7 @@ function atualizarClasseFalandoVoz() {
 async function criarConexaoVoz(outroUsuario, souIniciador, canalId) {
     const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
     vozStreamLocal.getTracks().forEach(t => pc.addTrack(t, vozStreamLocal));
+    if (vozVideoStream) vozVideoStream.getTracks().forEach(t => pc.addTrack(t, vozVideoStream));
     if (vozTelaStream) vozTelaStream.getTracks().forEach(t => pc.addTrack(t, vozTelaStream));
     pc.ontrack = (ev) => {
         if (ev.track.kind === 'video') {
@@ -2755,7 +2865,7 @@ async function pollarSinaisVoz() {
 function htmlBotoesVoz() {
     return `<button class="${vozMutado?'ativado':''}" onclick="alternarMudoVoz()" id="botaoMudoVoz" title="Mutar/desmutar">${vozMutado?'&#128263;':'&#127908;'}</button>
             <button class="${vozSurdo?'ativado':''}" onclick="alternarSurdoVoz()" id="botaoSurdoVoz" title="Ensurdecer">&#128266;</button>
-            <button class="${vozCompartilhandoTela?'ativado':''}" onclick="alternarCompartilharTelaVoz()" id="botaoTelaVoz" title="Compartilhar tela">&#128421;</button>
+            <button class="${vozCompartilhandoTela?'ativado':''}" onclick="alternarCompartilharTelaVoz()" id="botaoTelaVoz" title="Compartilhar tela">&#128421;</button><button class="${vozComCamera?'ativado':''}" onclick="alternarCameraVoz()" id="botaoCameraVoz" title="Camera">&#128247;</button>
             <button class="sair" onclick="sairCanalVoz()" title="Sair">&#9632;</button>`;
 }
 async function entrarCanalVoz(canalId) {
@@ -2792,6 +2902,13 @@ async function renegociarComTodosVoz() {
         enviarSinalVoz(vozCanalAtualId, usuario, 'oferta', oferta);
     }
 }
+async function alternarCameraVoz(){
+    if(!vozStreamLocal)return toastSite('Entre no canal de voz primeiro.','erro');
+    if(vozVideoStream){ vozVideoStream.getTracks().forEach(t=>{for(const usuario in vozConexoes){const sender=vozConexoes[usuario].getSenders().find(x=>x.track===t);if(sender)vozConexoes[usuario].removeTrack(sender);}}); vozVideoStream.getTracks().forEach(t=>t.stop()); vozVideoStream=null; vozComCamera=false; const lv=document.getElementById('videoCameraLocalVoz'); if(lv){lv.srcObject=null;lv.style.display='none';} toastSite('Câmera desligada.','sucesso'); }
+    else { try{ vozVideoStream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user'}}); const tr=vozVideoStream.getVideoTracks()[0]; for(const usuario in vozConexoes){vozConexoes[usuario].addTrack(tr,vozVideoStream); const of=await vozConexoes[usuario].createOffer(); await vozConexoes[usuario].setLocalDescription(of); await enviarSinalVoz(vozCanalAtualId,usuario,'oferta',of);} vozComCamera=true; const lv=document.getElementById('videoCameraLocalVoz'); if(lv){lv.srcObject=vozVideoStream;lv.style.display='block';} toastSite('Câmera ligada.','sucesso'); }catch(e){toastSite('Não foi possível acessar a câmera.','erro');return;} }
+    const b=document.getElementById('botaoCameraVoz'); if(b){b.classList.toggle('ativado',vozComCamera);}
+}
+
 async function alternarCompartilharTelaVoz() {
     if (vozCompartilhandoTela) { pararCompartilharTelaVoz(); return; }
     try { vozTelaStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false }); }
@@ -2824,11 +2941,12 @@ async function sairCanalVoz() {
     pararMonitorVolumeVoz(MEU_USUARIO);
     vozConexoes = {};
     if (vozStreamLocal) { vozStreamLocal.getTracks().forEach(t => t.stop()); vozStreamLocal = null; }
+    if (vozVideoStream) { vozVideoStream.getTracks().forEach(t => t.stop()); vozVideoStream = null; }
     if (vozTelaStream) { vozTelaStream.getTracks().forEach(t => t.stop()); vozTelaStream = null; }
     document.querySelectorAll("audio[id^='audio-voz-']").forEach(a => a.remove());
     document.querySelectorAll("video[id^='video-voz-']").forEach(v => v.remove());
     if (vozPollSinais) { clearInterval(vozPollSinais); vozPollSinais = null; }
-    vozCanalAtualId = null; vozMutado = false; vozSurdo = false; vozCompartilhandoTela = false;
+    vozCanalAtualId = null; vozMutado = false; vozSurdo = false; vozCompartilhandoTela = false; vozComCamera = false;
     const bcv = document.getElementById('botoesControleVoz');
     if (bcv) bcv.innerHTML = `<button class="entrar" onclick="entrarCanalVoz(${canalEncerrado})">&#128222;</button>`;
 }
@@ -2862,7 +2980,7 @@ window.addEventListener('beforeunload', () => {
 // Chamadas de voz/video em DM (1 para 1)
 // ---------------------------------------------------------------
 let dmPc = null, dmStreamLocal = null, chamadaDmAtualId = null, contatoChamadaDm = null, dmComVideo = false;
-let dmPollCandidatos = null, dmPollStatus = null, dmIndiceCandidatosRecebidos = 0, dmMutado = false;
+let dmPollCandidatos = null, dmPollStatus = null, dmIndiceCandidatosRecebidos = 0, dmMutado = false, dmTelaStream = null;
 
 function abrirModalChamadaDM(nome, avatar, statusTexto, botoesHtml, comVideo) {
     document.getElementById('nomeChamadaDM').textContent = nome;
@@ -2896,7 +3014,7 @@ async function criarConexaoDM(comVideo) {
 }
 function botoesEmChamadaDmHtml() {
     let html = `<button class="botao-chamada-circulo neutro" id="botaoMudoDM" onclick="alternarMudoDM()">${dmMutado?'&#128263;':'&#127908;'}</button>`;
-    html += `<button class="botao-chamada-circulo encerrar" onclick="encerrarChamadaDM(true)">&#128222;</button>`;
+ html += `<button class="botao-chamada-circulo encerrar" onclick="encerrarChamadaDM(true)">&#128222;</button>`;
     return html;
 }
 function alternarMudoDM() {
@@ -2976,6 +3094,7 @@ async function encerrarChamadaDM(avisarServidor) {
     if (avisarServidor && chamadaDmAtualId) fetch('/api/chamada/encerrar', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ chamada_id: chamadaDmAtualId }) });
     if (dmPc) { dmPc.close(); dmPc = null; }
     if (dmStreamLocal) { dmStreamLocal.getTracks().forEach(t => t.stop()); dmStreamLocal = null; }
+    if (dmTelaStream) { dmTelaStream.getTracks().forEach(t => t.stop()); dmTelaStream = null; }
     if (dmPollCandidatos) { clearInterval(dmPollCandidatos); dmPollCandidatos = null; }
     if (dmPollStatus) { clearInterval(dmPollStatus); dmPollStatus = null; }
     chamadaDmAtualId = null; contatoChamadaDm = null; dmMutado = false;
@@ -2996,9 +3115,10 @@ document.querySelectorAll('.fundo-modal').forEach(m => {
 
 (async function inicializar() {
     pulsarPresenca();
-    setTimeout(() => document.getElementById('telaCarregamento')?.classList.add('oculta'), 450);
+    setTimeout(() => document.getElementById('telaCarregamento')?.classList.add('oculta'), 15000);
     window._naoLidosCache = await (await fetch('/api/nao_lidos')).json();
     abrirVisaoAmigos();
+    setTimeout(instalarFallbackImagens, 300);
     setInterval(() => { if (estado.contexto === 'amigos') renderizarPainelAmigosCentral(); }, 6000);
 })();
 </script>
@@ -3452,6 +3572,82 @@ def api_dm_excluir(mensagem_id):
     conexao.commit()
     conexao.close()
     return jsonify({"ok": True})
+
+
+# =====================================================================
+# API: grupos de conversa (máximo 10 pessoas)
+# =====================================================================
+
+def usuario_no_grupo(conexao, grupo_id, usuario):
+    return conexao.execute("SELECT 1 FROM grupo_membros WHERE grupo_id=? AND usuario=? COLLATE NOCASE", (grupo_id, usuario)).fetchone() is not None
+
+@app.route("/api/grupos")
+def api_grupos():
+    erro=exigir_login()
+    if erro:return erro
+    u=usuario_logado(); c=obter_bd(); grupos=c.execute("SELECT g.id,g.nome FROM grupos_dm g JOIN grupo_membros gm ON gm.grupo_id=g.id WHERE gm.usuario=? COLLATE NOCASE ORDER BY g.id DESC",(u,)).fetchall(); c.close()
+    return jsonify([{"id":g["id"],"nome":g["nome"]} for g in grupos])
+
+@app.route("/api/grupos/criar", methods=["POST"])
+def api_grupo_criar():
+    erro=exigir_login()
+    if erro:return erro
+    u=usuario_logado(); d=request.get_json() or {}; nome=(d.get("nome") or "Novo grupo").strip()[:60]; membros=d.get("membros") or []
+    membros=[str(x).strip() for x in membros if str(x).strip() and str(x).strip().lower()!=u.lower()]
+    if len(membros)>9:return jsonify({"ok":False,"erro":"Um grupo pode ter no máximo 10 pessoas contando você."}),400
+    c=obter_bd(); validos=[]
+    for m in membros:
+        if buscar_usuario(m): validos.append(m)
+    if not validos:return jsonify({"ok":False,"erro":"Escolha pelo menos um amigo válido."}),400
+    # Apenas amizades aceitas podem entrar.
+    for m in validos:
+        amizade=c.execute("SELECT 1 FROM amizades WHERE status='aceita' AND ((solicitante=? COLLATE NOCASE AND destinatario=? COLLATE NOCASE) OR (solicitante=? COLLATE NOCASE AND destinatario=? COLLATE NOCASE))",(u,m,m,u)).fetchone()
+        if not amizade: c.close(); return jsonify({"ok":False,"erro":f"{m} não é seu amigo."}),403
+    c.execute("INSERT INTO grupos_dm(nome,criado_por,criado_em) VALUES(?,?,?)",(nome or 'Novo grupo',u,datetime.now().isoformat())); gid=c.execute("SELECT last_insert_rowid()").fetchone()[0]
+    for m in [u]+validos:c.execute("INSERT INTO grupo_membros(grupo_id,usuario,entrou_em) VALUES(?,?,?)",(gid,m,datetime.now().isoformat()))
+    c.commit();c.close();return jsonify({"ok":True,"id":gid})
+
+@app.route("/api/grupos/<int:grupo_id>")
+def api_grupo_detalhe(grupo_id):
+    erro=exigir_login()
+    if erro:return erro
+    u=usuario_logado();c=obter_bd();g=c.execute("SELECT * FROM grupos_dm WHERE id=?",(grupo_id,)).fetchone()
+    if not g or not usuario_no_grupo(c,grupo_id,u): c.close();return jsonify({"ok":False}),404
+    ms=c.execute("SELECT usuario FROM grupo_membros WHERE grupo_id=? ORDER BY rowid",(grupo_id,)).fetchall();c.close()
+    return jsonify({"ok":True,"id":grupo_id,"nome":g["nome"],"membros":[m["usuario"] for m in ms]})
+
+@app.route("/api/grupos/<int:grupo_id>/mensagens")
+def api_grupo_mensagens(grupo_id):
+    erro=exigir_login()
+    if erro:return erro
+    u=usuario_logado();c=obter_bd()
+    if not usuario_no_grupo(c,grupo_id,u):c.close();return jsonify({"ok":False}),403
+    linhas=c.execute("SELECT * FROM grupo_mensagens WHERE grupo_id=? ORDER BY id ASC LIMIT 300",(grupo_id,)).fetchall();c.close();out=[]
+    for l in linhas:
+        usr=buscar_usuario(l["remetente"]);out.append({"id":l["id"],"remetente":l["remetente"],"nome_exibicao":l["remetente"],"conteudo":l["conteudo"],"tipo":l["tipo"],"criado_em":l["criado_em"],"editado_em":None,"avatar":avatar_de(usr) if usr else AVATAR_PADRAO+l["remetente"],"minha":l["remetente"].lower()==u.lower(),"reacoes":[]})
+    return jsonify({"ok":True,"mensagens":out})
+
+@app.route("/api/grupos/<int:grupo_id>/enviar",methods=["POST"])
+def api_grupo_enviar(grupo_id):
+    erro=exigir_login()
+    if erro:return erro
+    u=usuario_logado();texto=((request.get_json() or {}).get("texto") or "").strip()
+    if not texto:return jsonify({"ok":False,"erro":"Mensagem vazia."}),400
+    c=obter_bd()
+    if not usuario_no_grupo(c,grupo_id,u):c.close();return jsonify({"ok":False}),403
+    c.execute("INSERT INTO grupo_mensagens(grupo_id,remetente,tipo,conteudo,criado_em) VALUES(?,?,?,?,?)",(grupo_id,u,'texto',texto,datetime.now().isoformat()));c.commit();c.close();return jsonify({"ok":True})
+
+@app.route("/api/grupos/<int:grupo_id>/midia",methods=["POST"])
+def api_grupo_midia(grupo_id):
+    erro=exigir_login()
+    if erro:return erro
+    u=usuario_logado();arquivo=request.files.get('arquivo');tipo=tipo_midia_por_extensao(arquivo.filename if arquivo else '')
+    if not arquivo or not tipo:return jsonify({"ok":False,"erro":"Formato de mídia não suportado."}),400
+    c=obter_bd()
+    if not usuario_no_grupo(c,grupo_id,u):c.close();return jsonify({"ok":False}),403
+    url=salvar_arquivo_enviado(arquivo,tipo)
+    if not url:c.close();return jsonify({"ok":False,"erro":"Falha ao salvar mídia."}),500
+    c.execute("INSERT INTO grupo_mensagens(grupo_id,remetente,tipo,conteudo,criado_em) VALUES(?,?,?,?,?)",(grupo_id,u,tipo,url,datetime.now().isoformat()));c.commit();c.close();return jsonify({"ok":True,"url":url,"tipo":tipo})
 
 
 # =====================================================================
