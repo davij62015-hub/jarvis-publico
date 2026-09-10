@@ -1286,11 +1286,21 @@ html, body { height:100%; overflow:hidden; }
 .item-menu-flutuante.perigo { color:#da373c; }
 .item-menu-flutuante.perigo:hover { background:#da373c; color:#fff; }
 
-.dialog-site-backdrop{display:none;position:fixed;inset:0;background:#0009;z-index:5000;align-items:center;justify-content:center;padding:18px}.dialog-site-backdrop.aberto{display:flex}.dialog-site{width:min(430px,calc(100vw - 36px));background:#2b2d31;border:1px solid #3f4147;border-radius:12px;box-shadow:0 18px 60px #0008;overflow:hidden}.dialog-site-topo{padding:18px 20px 8px}.dialog-site-topo h3{margin:0;color:#fff;font-size:18px}.dialog-site-topo p{margin:7px 0 0;color:#b5bac1;font-size:13px;line-height:1.45}.dialog-site-corpo{padding:12px 20px 18px}.dialog-site-corpo input{width:100%;box-sizing:border-box;background:#1e1f22;border:1px solid #4e5058;color:#fff;border-radius:8px;padding:11px 12px;outline:none}.dialog-site-corpo input:focus{border-color:#5865f2;box-shadow:0 0 0 2px #5865f244}.dialog-site-botoes{display:flex;justify-content:flex-end;gap:9px;padding:0 20px 18px}.dialog-site-botoes button{border:0;border-radius:8px;padding:10px 16px;font-weight:700;cursor:pointer}.dialog-site-cancelar{background:#4a4d55;color:#fff}.dialog-site-confirmar{background:#5865f2;color:#fff}.dialog-site-perigo{background:#da373c;color:#fff}.dialog-site-mensagem{color:#dbdee1;font-size:14px;line-height:1.5}.grupo-canais-titulo{display:flex;align-items:center;gap:6px;min-height:30px;padding:8px 8px 3px;color:#949ba4;font-size:11px;font-weight:800;letter-spacing:.5px;text-transform:uppercase}.vazio-categoria{padding:4px 14px 7px;color:#6d7078;font-size:12px}.item-canal-servidor{position:relative;display:flex;align-items:center;min-height:34px;padding:0 9px;border-radius:5px;margin:1px 6px;color:#b5bac1;cursor:pointer;font-size:14px}.item-canal-servidor:hover{background:#35373c;color:#dbdee1}.item-canal-servidor.ativo{background:#404249;color:#fff}.add-canal-btn{margin-left:auto;width:20px;height:20px;display:inline-flex;align-items:center;justify-content:center;border-radius:4px;color:#b5bac1;cursor:pointer}.add-canal-btn:hover{background:#404249;color:#fff}..fundo-modal { display:none; position:fixed; inset:0; background:#00000088; z-index:200; align-items:center; justify-content:center;
+.dialog-site-backdrop{display:none;position:fixed;inset:0;background:#0009;z-index:5000;align-items:center;justify-content:center;padding:18px}.dialog-site-backdrop.aberto{display:flex}.dialog-site{width:min(430px,calc(100vw - 36px));background:#2b2d31;border:1px solid #3f4147;border-radius:12px;box-shadow:0 18px 60px #0008;overflow:hidden}.dialog-site-topo{padding:18px 20px 8px}.dialog-site-topo h3{margin:0;color:#fff;font-size:18px}.dialog-site-topo p{margin:7px 0 0;color:#b5bac1;font-size:13px;line-height:1.45}.dialog-site-corpo{padding:12px 20px 18px}.dialog-site-corpo input{width:100%;box-sizing:border-box;background:#1e1f22;border:1px solid #4e5058;color:#fff;border-radius:8px;padding:11px 12px;outline:none}.dialog-site-corpo input:focus{border-color:#5865f2;box-shadow:0 0 0 2px #5865f244}.dialog-site-botoes{display:flex;justify-content:flex-end;gap:9px;padding:0 20px 18px}.dialog-site-botoes button{border:0;border-radius:8px;padding:10px 16px;font-weight:700;cursor:pointer}.dialog-site-cancelar{background:#4a4d55;color:#fff}.dialog-site-confirmar{background:#5865f2;color:#fff}.dialog-site-perigo{background:#da373c;color:#fff}.dialog-site-mensagem{color:#dbdee1;font-size:14px;line-height:1.5}.grupo-canais-titulo{display:flex;align-items:center;gap:6px;min-height:30px;padding:8px 8px 3px;color:#949ba4;font-size:11px;font-weight:800;letter-spacing:.5px;text-transform:uppercase}.vazio-categoria{padding:4px 14px 7px;color:#6d7078;font-size:12px}.item-canal-servidor{position:relative;display:flex;align-items:center;min-height:34px;padding:0 9px;border-radius:5px;margin:1px 6px;color:#b5bac1;cursor:pointer;font-size:14px}.item-canal-servidor:hover{background:#35373c;color:#dbdee1}.item-canal-servidor.ativo{background:#404249;color:#fff}.add-canal-btn{margin-left:auto;width:20px;height:20px;display:inline-flex;align-items:center;justify-content:center;border-radius:4px;color:#b5bac1;cursor:pointer}.add-canal-btn:hover{background:#404249;color:#fff}.fundo-modal { display:none; position:fixed; inset:0; background:#00000088; z-index:200; align-items:center; justify-content:center; padding:18px;
                padding:16px; }
 .fundo-modal.aberto { display:flex; }
 .caixa-modal { background:#313338; border-radius:8px; width:100%; max-width:460px; max-height:88vh; overflow-y:auto; }
 .caixa-modal.grande { max-width:640px; }
+.modal-amigo-ia { width:min(860px, calc(100vw - 36px)); max-width:860px; max-height:calc(100vh - 36px); display:flex; flex-direction:column; }
+.modal-amigo-ia .topo-modal { flex:0 0 auto; }
+.corpo-amigo-ia { display:flex; flex-direction:column; min-height:0; flex:1; }
+.modal-amigo-ia .historico-ia-estavel { height:52vh; min-height:300px; max-height:560px; padding:18px; background:#1e1f22; border:1px solid #25262a; border-radius:10px; }
+.entrada-amigo-ia { flex:0 0 auto; margin-top:12px; }
+.entrada-amigo-ia input { min-width:0; }
+@media (max-width:700px) {
+  .modal-amigo-ia { width:calc(100vw - 20px); max-height:calc(100vh - 20px); }
+  .modal-amigo-ia .historico-ia-estavel { height:55vh; min-height:240px; }
+}
 .caixa-modal .topo-modal { padding:16px 16px 0; }
 .caixa-modal .topo-modal h2 { color:#fff; font-size:20px; text-align:center; }
 .caixa-modal .topo-modal p { color:#949ba4; font-size:13px; text-align:center; margin-top:6px; }
@@ -1637,9 +1647,18 @@ CORPO_APP_SHELL = """
 
 <!-- Modal: Amigo IA -->
 <div class="fundo-modal" id="modalAmigoIA">
-  <div class="caixa-modal grande">
-    <div class="topo-modal"><h2>Amigo IA</h2><p>Assistente de IA disponivel para todos no NOVO GG. Dono: Samuel Gomes.</p></div>
-    <div class="corpo-modal"><div id="historicoIA" class="lista-mensagens historico-ia-estavel" style="height:45vh;min-height:180px;background:#1e1f22;border-radius:8px;"></div><div class="caixa-input-msg" style="margin-top:10px;"><input id="campoIA" placeholder="Pergunte qualquer coisa..." onkeydown="if(event.key==='Enter')enviarPerguntaIA()"><button onclick="enviarPerguntaIA()">&#10148;</button></div></div>
+  <div class="caixa-modal grande modal-amigo-ia">
+    <div class="topo-modal">
+      <h2>Amigo IA</h2>
+      <p>Desenvolvido por <strong>Samuel Gomes</strong> para o NOVO GG.</p>
+    </div>
+    <div class="corpo-modal corpo-amigo-ia">
+      <div id="historicoIA" class="lista-mensagens historico-ia-estavel"></div>
+      <div class="caixa-input-msg entrada-amigo-ia">
+        <input id="campoIA" autocomplete="off" placeholder="Pergunte qualquer coisa..." onkeydown="if(event.key==='Enter')enviarPerguntaIA()">
+        <button onclick="enviarPerguntaIA()">&#10148;</button>
+      </div>
+    </div>
     <div class="linha-botoes-modal"><button class="cancelar-modal" onclick="fecharModal('modalAmigoIA')">Fechar</button></div>
   </div>
 </div>
@@ -5000,21 +5019,35 @@ def api_amigo_ia():
     pergunta = ((request.get_json(silent=True) or {}).get("mensagem") or "").strip()
     if not pergunta:
         return jsonify({"ok": False, "erro": "Digite uma pergunta."}), 400
+
+    # Perguntas de autoria ficam determinadas pelo próprio aplicativo,
+    # evitando que o modelo atribua a criação do Amigo IA a outra empresa.
+    pergunta_autoria = pergunta.lower()
+    termos_autoria = ("quem te criou", "quem criou voce", "quem criou você", "quem fez você",
+                      "quem fez voce", "quem desenvolveu você", "quem desenvolveu voce",
+                      "quem é seu criador", "quem e seu criador", "quem é o criador",
+                      "quem e o criador", "seu criador", "seu desenvolvedor")
+    if any(t in pergunta_autoria for t in termos_autoria):
+        return jsonify({
+            "ok": True,
+            "resposta": "Eu sou o Amigo IA do NOVO GG, desenvolvido por Samuel Gomes.\nO modelo de inteligência artificial usado pelo aplicativo é fornecido por um provedor de IA.",
+            "modelo": "identidade_do_app"
+        })
     if not GROQ_API_KEY or Groq is None:
         return jsonify({"ok": False, "erro": "Amigo IA ainda nao esta configurado. Adicione GROQ_API_KEY no Render."}), 503
 
     modelos = list(dict.fromkeys([m for m in (GROQ_MODEL, "openai/gpt-oss-20b") if m]))
     for modelo in modelos:
         try:
-            cliente = Groq(api_key=GROQ_API_KEY, timeout=12.0, max_retries=0)
+            cliente = Groq(api_key=GROQ_API_KEY, timeout=10.0, max_retries=0)
             resp = cliente.chat.completions.create(
                 model=modelo,
                 messages=[
-                    {"role": "system", "content": "Voce e o Amigo IA do NOVO GG. Responda em portugues brasileiro, de forma clara, direta e segura. Nao invente recursos do aplicativo."},
+                    {"role": "system", "content": "Voce e o Amigo IA do NOVO GG, desenvolvido por Samuel Gomes para o aplicativo. Responda em portugues brasileiro, de forma clara, direta e segura. Quando perguntarem quem criou voce, diga que o Amigo IA foi desenvolvido por Samuel Gomes para o NOVO GG. Nao afirme que Samuel criou o modelo de IA subjacente; deixe claro que o aplicativo usa um provedor de modelo de IA. Nao invente recursos do aplicativo."},
                     {"role": "user", "content": pergunta},
                 ],
                 temperature=0.5,
-                max_tokens=700,
+                max_tokens=450,
             )
             resposta = (resp.choices[0].message.content or "").strip()
             if resposta:
