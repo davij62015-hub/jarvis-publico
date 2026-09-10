@@ -128,9 +128,9 @@ def servir_upload(nome):
 def obter_bd():
     # SQLite precisa de um pequeno tempo para esperar outra requisição terminar
     # uma escrita. Isso evita "database is locked" em polling/WebRTC.
-    conexao = sqlite3.connect(CAMINHO_BD, timeout=30, check_same_thread=False)
+    conexao = sqlite3.connect(CAMINHO_BD, timeout=5, check_same_thread=False)
     conexao.row_factory = sqlite3.Row
-    conexao.execute("PRAGMA busy_timeout = 30000")
+    conexao.execute("PRAGMA busy_timeout = 5000")
     conexao.execute("PRAGMA foreign_keys = ON")
     try:
         conexao.execute("PRAGMA journal_mode = WAL")
@@ -468,8 +468,10 @@ def iniciar_bd():
 
 def gerar_id_publico(conexao):
     maior = conexao.execute("SELECT MAX(id_publico) as m FROM usuarios").fetchone()["m"]
-    return (maior or 0) + 1
-
+    candidato = max(1, int(maior or 0) + 1)
+    while conexao.execute("SELECT 1 FROM usuarios WHERE id_publico = ?", (candidato,)).fetchone():
+        candidato += 1
+    return candidato
 
 # =====================================================================
 # Helpers de usuario / autenticacao / permissoes
@@ -743,6 +745,9 @@ ESTILO_BASE = """
 .loading-titulo { color:#fff; font-weight:700; font-size:20px; letter-spacing:.3px; }
  .loading-sub { color:#949ba4; font-size:13px; }
 .loading-progress { color:#6d7480; font-size:11px; min-height:16px; }
+.historico-ia-estavel { overflow-y:auto; overflow-x:hidden; }
+#iaPensando .texto-msg { min-height:22px; opacity:.75; }
+.caixa-input-msg button:disabled { opacity:.45; cursor:not-allowed; }
 
 .loading-spinner { width:28px; height:28px; border:3px solid #ffffff18; border-top-color:#5865f2; border-radius:50%; animation:loadingSpin .8s linear infinite; }
 @keyframes loadingSpin { to { transform:rotate(360deg); } }
@@ -977,30 +982,62 @@ def auth_google():
 
     conexao = obter_bd()
     linha = conexao.execute("SELECT * FROM usuarios WHERE email = ? COLLATE NOCASE", (email,)).fetchone()
+    email_eh_dono = email.lower() == EMAIL_DONO.lower()
+
     if linha:
-        conexao.close()
         if linha["banido"]:
+            conexao.close()
             return jsonify({"ok": False, "erro": "Sua conta foi banida."})
+
+        # Corrige bancos antigos: a conta do dono fica no ID 1.
+        if email_eh_dono and int(linha["id_publico"] or 0) != 1:
+            antigo_id = int(linha["id_publico"] or 0)
+            ocupante = conexao.execute(
+                "SELECT usuario FROM usuarios WHERE id_publico = 1 AND usuario != ? COLLATE NOCASE",
+                (linha["usuario"],),
+            ).fetchone()
+            if ocupante:
+                novo_id_ocupante = gerar_id_publico(conexao)
+                conexao.execute("UPDATE usuarios SET id_publico = ? WHERE usuario = ?", (novo_id_ocupante, ocupante["usuario"]))
+            conexao.execute("UPDATE usuarios SET id_publico = 1, eh_admin = 1 WHERE usuario = ?", (linha["usuario"],))
+            conexao.commit()
+            linha = conexao.execute("SELECT * FROM usuarios WHERE usuario = ? COLLATE NOCASE", (linha["usuario"],)).fetchone()
+
+        conexao.close()
         session["usuario"] = linha["usuario"]
         marcar_atividade(linha["usuario"])
         return jsonify({"ok": True})
 
-    usuario_base = re.sub(r"[#|/\\\\]", "", nome_google).strip() or email.split("@")[0]
+    usuario_base = re.sub(r"[#|/\\]", "", nome_google).strip() or email.split("@")[0]
     usuario_base = usuario_base[:32] or "usuario"
     usuario_final = usuario_base
     contador = 1
     while conexao.execute("SELECT 1 FROM usuarios WHERE usuario = ? COLLATE NOCASE", (usuario_final,)).fetchone():
         contador += 1
         usuario_final = f"{usuario_base}{contador}"[:32]
-    id_publico = 1 if email.lower() == EMAIL_DONO.lower() else gerar_id_publico(conexao)
+
+    if email_eh_dono:
+        ocupante = conexao.execute("SELECT usuario FROM usuarios WHERE id_publico = 1").fetchone()
+        if ocupante:
+            conexao.execute("UPDATE usuarios SET id_publico = ? WHERE usuario = ?", (gerar_id_publico(conexao), ocupante["usuario"]))
+        id_publico = 1
+    else:
+        id_publico = gerar_id_publico(conexao)
+
     eh_primeira_conta = conexao.execute("SELECT COUNT(*) AS n FROM usuarios").fetchone()["n"] == 0
-    conexao.execute(
-        "INSERT INTO usuarios (usuario, senha_hash, id_publico, eh_admin, email, criado_em, ultima_atividade) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (usuario_final, generate_password_hash(uuid.uuid4().hex), id_publico, 1 if eh_primeira_conta else 0,
-         email, datetime.now().isoformat(), datetime.now().isoformat()),
-    )
-    conexao.commit()
+    try:
+        conexao.execute(
+            "INSERT INTO usuarios (usuario, senha_hash, id_publico, eh_admin, email, criado_em, ultima_atividade) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (usuario_final, generate_password_hash(uuid.uuid4().hex), id_publico,
+             1 if (eh_primeira_conta or email_eh_dono) else 0, email,
+             datetime.now().isoformat(), datetime.now().isoformat()),
+        )
+        conexao.commit()
+    except sqlite3.IntegrityError:
+        conexao.rollback()
+        conexao.close()
+        return jsonify({"ok": False, "erro": "Nao foi possivel criar a conta agora. Tente entrar novamente."}), 409
     conexao.close()
     session["usuario"] = usuario_final
     return jsonify({"ok": True})
@@ -1602,7 +1639,7 @@ CORPO_APP_SHELL = """
 <div class="fundo-modal" id="modalAmigoIA">
   <div class="caixa-modal grande">
     <div class="topo-modal"><h2>Amigo IA</h2><p>Assistente de IA disponivel para todos no NOVO GG. Dono: Samuel Gomes.</p></div>
-    <div class="corpo-modal"><div id="historicoIA" class="lista-mensagens" style="max-height:45vh;min-height:180px;background:#1e1f22;border-radius:8px;"></div><div class="caixa-input-msg" style="margin-top:10px;"><input id="campoIA" placeholder="Pergunte qualquer coisa..." onkeydown="if(event.key==='Enter')enviarPerguntaIA()"><button onclick="enviarPerguntaIA()">&#10148;</button></div></div>
+    <div class="corpo-modal"><div id="historicoIA" class="lista-mensagens historico-ia-estavel" style="height:45vh;min-height:180px;background:#1e1f22;border-radius:8px;"></div><div class="caixa-input-msg" style="margin-top:10px;"><input id="campoIA" placeholder="Pergunte qualquer coisa..." onkeydown="if(event.key==='Enter')enviarPerguntaIA()"><button onclick="enviarPerguntaIA()">&#10148;</button></div></div>
     <div class="linha-botoes-modal"><button class="cancelar-modal" onclick="fecharModal('modalAmigoIA')">Fechar</button></div>
   </div>
 </div>
@@ -2357,10 +2394,25 @@ async function enviarMidiaDM(){
 
 function abrirAmigoIA(){ abrirModal('modalAmigoIA'); document.getElementById('campoIA').focus(); }
 async function enviarPerguntaIA(){
-    const campo=document.getElementById('campoIA'), pergunta=campo.value.trim(); if(!pergunta)return; campo.value='';
-    const hist=document.getElementById('historicoIA'); hist.innerHTML += `<div class="grupo-mensagem"><div class="conteudo-msg-grupo"><div class="texto-msg"><b>Voce:</b> ${escaparHtml(pergunta)}</div></div></div>`;
-    const r=await fetch('/api/ia',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mensagem:pergunta})}); const d=await r.json();
-    hist.innerHTML += `<div class="grupo-mensagem"><div class="conteudo-msg-grupo"><div class="cabecalho-msg"><span class="autor-msg">Amigo IA</span></div><div class="texto-msg">${escaparHtml(d.resposta||d.erro||'Nao foi possivel responder.')}</div></div></div>`; hist.scrollTop=hist.scrollHeight;
+    const campo=document.getElementById('campoIA'), botao=campo?.nextElementSibling, pergunta=campo.value.trim();
+    if(!pergunta || campo.dataset.enviando==='1') return;
+    campo.dataset.enviando='1'; campo.value=''; if(botao) botao.disabled=true;
+    const hist=document.getElementById('historicoIA');
+    hist.insertAdjacentHTML('beforeend', `<div class="grupo-mensagem"><div class="conteudo-msg-grupo"><div class="texto-msg"><b>Voce:</b> ${escaparHtml(pergunta)}</div></div></div><div id="iaPensando" class="grupo-mensagem"><div class="conteudo-msg-grupo"><div class="cabecalho-msg"><span class="autor-msg">Amigo IA</span></div><div class="texto-msg">Respondendo...</div></div></div>`);
+    hist.scrollTop=hist.scrollHeight;
+    try {
+        const r=await fetch('/api/ia',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mensagem:pergunta})});
+        const d=await r.json();
+        document.getElementById('iaPensando')?.remove();
+        hist.insertAdjacentHTML('beforeend', `<div class="grupo-mensagem"><div class="conteudo-msg-grupo"><div class="cabecalho-msg"><span class="autor-msg">Amigo IA</span></div><div class="texto-msg">${escaparHtml(d.resposta||d.erro||'Nao foi possivel responder.')}</div></div></div>`);
+        hist.scrollTop=hist.scrollHeight;
+    } catch (e) {
+        document.getElementById('iaPensando')?.remove();
+        hist.insertAdjacentHTML('beforeend', `<div class="grupo-mensagem"><div class="conteudo-msg-grupo"><div class="texto-msg">Nao foi possivel conectar com a IA agora.</div></div></div>`);
+        hist.scrollTop=hist.scrollHeight;
+    } finally {
+        campo.dataset.enviando='0'; if(botao) botao.disabled=false; campo.focus();
+    }
 }
 
 // ---------------------------------------------------------------
@@ -4817,22 +4869,11 @@ def api_chamada_pendente():
         return erro
     usuario = usuario_logado()
     conexao = obter_bd()
-    # Esta rota é consultada repetidamente pelo navegador. A limpeza é útil,
-    # mas não pode derrubar a página caso outra requisição esteja escrevendo.
-    try:
-        conexao.execute(
-            "UPDATE chamadas_dm SET status = 'encerrada' WHERE status = 'chamando' AND criado_em < ?",
-            ((datetime.now() - timedelta(seconds=45)).isoformat(),),
-        )
-        conexao.commit()
-    except sqlite3.OperationalError as exc:
-        if "locked" not in str(exc).lower():
-            conexao.close()
-            raise
-        conexao.rollback()
+    # Polling deve ser somente leitura para nao disputar lock com outras escritas.
+    limite = (datetime.now() - timedelta(seconds=45)).isoformat()
     linha = conexao.execute(
-        "SELECT * FROM chamadas_dm WHERE quem_recebe = ? COLLATE NOCASE AND status = 'chamando' ORDER BY id DESC LIMIT 1",
-        (usuario,),
+        "SELECT * FROM chamadas_dm WHERE quem_recebe = ? COLLATE NOCASE AND status = 'chamando' AND criado_em >= ? ORDER BY id DESC LIMIT 1",
+        (usuario, limite),
     ).fetchone()
     conexao.close()
     if not linha:
@@ -4954,35 +4995,36 @@ def api_chamada_encerrar():
 @app.route("/api/ia", methods=["POST"])
 def api_amigo_ia():
     erro = exigir_login()
-    if erro: return erro
+    if erro:
+        return erro
     pergunta = ((request.get_json(silent=True) or {}).get("mensagem") or "").strip()
-    if not pergunta: return jsonify({"ok": False, "erro": "Digite uma pergunta."}), 400
+    if not pergunta:
+        return jsonify({"ok": False, "erro": "Digite uma pergunta."}), 400
     if not GROQ_API_KEY or Groq is None:
         return jsonify({"ok": False, "erro": "Amigo IA ainda nao esta configurado. Adicione GROQ_API_KEY no Render."}), 503
-    modelos = [GROQ_MODEL, "openai/gpt-oss-20b", "openai/gpt-oss-120b"]
-    modelos = list(dict.fromkeys([m for m in modelos if m]))
-    ultimo_erro = None
+
+    modelos = list(dict.fromkeys([m for m in (GROQ_MODEL, "openai/gpt-oss-20b") if m]))
     for modelo in modelos:
         try:
-            cliente = Groq(api_key=GROQ_API_KEY)
+            cliente = Groq(api_key=GROQ_API_KEY, timeout=12.0, max_retries=0)
             resp = cliente.chat.completions.create(
                 model=modelo,
                 messages=[
-                    {"role":"system","content":"Voce e o Amigo IA do NOVO GG. Responda em portugues brasileiro de forma util, clara e segura. O dono do NOVO GG e Samuel Gomes. Nao invente recursos que o aplicativo nao possui."},
-                    {"role":"user","content": pergunta}
+                    {"role": "system", "content": "Voce e o Amigo IA do NOVO GG. Responda em portugues brasileiro, de forma clara, direta e segura. Nao invente recursos do aplicativo."},
+                    {"role": "user", "content": pergunta},
                 ],
-                temperature=0.6,
-                max_tokens=1200,
+                temperature=0.5,
+                max_tokens=700,
             )
             resposta = (resp.choices[0].message.content or "").strip()
             if resposta:
                 return jsonify({"ok": True, "resposta": resposta, "modelo": modelo})
         except Exception as exc:
-            ultimo_erro = str(exc)
-            # Se um modelo foi aposentado ou nao esta liberado para a chave, tenta o proximo.
-            if "404" not in ultimo_erro and "model_not_found" not in ultimo_erro.lower() and "does not exist" not in ultimo_erro.lower():
+            erro_texto = str(exc)
+            if "404" not in erro_texto and "model_not_found" not in erro_texto.lower() and "does not exist" not in erro_texto.lower():
                 break
-    return jsonify({"ok": False, "erro": "A IA esta temporariamente indisponivel. O NOVO GG tentou os modelos configurados e nao conseguiu acessar nenhum deles."}), 502
+
+    return jsonify({"ok": False, "erro": "A IA demorou demais ou ficou indisponivel. Tente novamente em alguns segundos."}), 504
 
 # =====================================================================
 # API: painel do administrador (nada pago - liberacao manual)
