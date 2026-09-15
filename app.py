@@ -787,6 +787,36 @@ def pagina_html(titulo, corpo, estilos_extra="", scripts_extra=""):
 body {{ font-family: 'Rubik', 'Segoe UI', sans-serif; }}
 {estilos_extra}
 </style>
+
+<style id="discord-webrtc-style">
+.botao-chamada-circulo {
+    width: 44px; height: 44px; border-radius: 50%; border: none; cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center;
+    transition: background-color 0.15s ease, transform 0.1s ease;
+    margin: 0 5px; color: #ffffff;
+}
+.botao-chamada-circulo:hover { transform: scale(1.05); }
+.botao-chamada-circulo:active { transform: scale(0.95); }
+.botao-chamada-circulo svg { width: 22px; height: 22px; fill: currentColor; }
+.botao-chamada-circulo.neutro { background-color: #313338; color: #dbdee1; }
+.botao-chamada-circulo.neutro:hover { background-color: #3b3e45; color: #ffffff; }
+.botao-chamada-circulo.ativo { background-color: #ffffff; color: #111214; }
+.botao-chamada-circulo.ativo svg { fill: #111214; }
+.botao-chamada-circulo.alerta { background-color: #f23f43; color: #ffffff; }
+.botao-chamada-circulo.alerta:hover { background-color: #da373c; }
+.botao-chamada-circulo.encerrar { background-color: #da373c; color: #ffffff; }
+.botao-chamada-circulo.encerrar:hover { background-color: #a1282c; }
+.botao-chamada-circulo.aceitar { background-color: #23a55a; color: #ffffff; }
+.botao-chamada-circulo.aceitar:hover { background-color: #1a8346; }
+.botao-chamada-circulo.recusar { background-color: #da373c; color: #ffffff; }
+.botao-chamada-circulo.recusar:hover { background-color: #a1282c; }
+.card-voz-participante { position: relative; border-radius: 8px; overflow: hidden; background: #2b2d31; }
+.card-voz-participante.falando { outline: 2px solid #23a55a; }
+.card-voz-participante video { width: 100%; height: 100%; object-fit: cover; background: #111214; border-radius: 8px; }
+.modal-chamada-video-container { display: flex; flex-direction: column; align-items: center; justify-content: center; width: 100%; height: 100%; min-height: 240px; position: relative; }
+.modal-chamada-video-container video.ativo { display: block !important; border-radius: 8px; max-height: 480px; width: 100%; background: #000; }
+</style>
+
 </head>
 <body>
 {corpo}
@@ -2855,9 +2885,27 @@ async function excluirServidorAdmin(id) {
 }
 
 // ---------------------------------------------------------------
+
+// ---------------------------------------------------------------
+// SVGs estilo Discord para controles de chamada
+// ---------------------------------------------------------------
+const ICONS = {
+    micOn: `<svg viewBox="0 0 24 24"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.48 6-3.3 6-6.72h-1.7z"/></svg>`,
+    micOff: `<svg viewBox="0 0 24 24"><path d="M19 11h-1.7c0 .74-.16 1.43-.43 2.05l1.23 1.23c.56-.98.9-2.09.9-3.28zm-4.02.17L12.01 8.2V5c0-1.66-1.34-3-3-3-.45 0-.86.11-1.24.29L9.75 4.27C9.83 4.27 9.92 4.27 10 4.27c1.66 0 3 1.34 3 3v3.9zm-8.87-8.8L4.27 3.53 7.8 7.05v3.95c0 3 2.54 5.1 5.3 5.1.78 0 1.52-.17 2.18-.47l2.84 2.84 1.41-1.41L6.11 2.37zM12 19.72c-3.28-.49-6-3.31-6-6.72H4.3c0 3.41 2.72 6.23 6 6.72V22h2v-2.28z"/></svg>`,
+    camOn: `<svg viewBox="0 0 24 24"><path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/></svg>`,
+    camOff: `<svg viewBox="0 0 24 24"><path d="M21 6.5l-4 4V7c0-.55-.45-1-1-1H9.82L21 17.18V6.5zM3.27 2L2 3.27 4.73 6H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.21 0 .39-.08.55-.18L19.73 21 21 19.73 3.27 2z"/></svg>`,
+    screenOn: `<svg viewBox="0 0 24 24"><path d="M20 18c1.1 0 1.99-.9 1.99-2L22 6c0-1.11-.9-2-2-2H4c-1.11 0-2 .89-2 2v10c0 1.1.89 2 2 2H0v2h24v-2h-4zM4 6h16v10H4V6zm5 8l3-3 3 3 1.41-1.41L12 8.17l-4.41 4.42L9 14z"/></svg>`,
+    screenOff: `<svg viewBox="0 0 24 24"><path d="M20 18c1.1 0 1.99-.9 1.99-2L22 6c0-1.11-.9-2-2-2H4c-1.11 0-2 .89-2 2v10c0 1.1.89 2 2 2H0v2h24v-2h-4zM4 6h16v10H4V6z"/></svg>`,
+    hangup: `<svg viewBox="0 0 24 24"><path d="M12 9c-1.6 0-3.15.25-4.6.72v3.1c0 .39-.23.74-.56.9-.98.49-1.87 1.12-2.66 1.85-.18.18-.43.28-.7.28-.28 0-.53-.11-.71-.29L.29 13.08a.996.996 0 0 1 0-1.41C3.28 8.91 7.42 7.36 12 7.36c4.58 0 8.72 1.55 11.71 4.31.39.39.39 1.02 0 1.41l-2.48 2.48c-.18.18-.43.29-.71.29-.27 0-.52-.11-.7-.28-.79-.74-1.69-1.36-2.67-1.85-.33-.16-.56-.5-.56-.9v-3.1C15.15 9.25 13.6 9 12 9z"/></svg>`,
+    callAccept: `<svg viewBox="0 0 24 24"><path d="M20.01 15.38c-1.23 0-2.42-.2-3.53-.56-.35-.12-.74-.03-1.01.24l-1.57 1.97c-2.83-1.44-5.15-3.75-6.59-6.59l1.97-1.57c.28-.27.36-.66.25-1.02-.37-1.11-.56-2.3-.56-3.53 0-.54-.45-.99-.99-.99H4.19C3.65 3 3 3.24 3 3.99 3 13.28 10.72 21 20.01 21c.71 0 .99-.63.99-1.18v-3.45c0-.54-.45-.99-.99-.99z"/></svg>`,
+    callReject: `<svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>`
+};
+
+// ---------------------------------------------------------------
 // Canal de voz do servidor: mesh WebRTC com sinalizacao por polling
 // ---------------------------------------------------------------
 let vozConexoes = {};
+let vozFilaIce = {};
 let vozStreamLocal = null;
 let vozVideoStream = null;
 let vozTelaStream = null;
@@ -2896,300 +2944,645 @@ function pararMonitorVolumeVoz(usuario) {
 function atualizarClasseFalandoVoz() {
     document.querySelectorAll('.card-voz-participante').forEach(el => { el.classList.toggle('falando', usuariosFalando.has(el.dataset.usuario)); });
 }
+
+// Captura de tela compatível com Chrome, Firefox, Edge
+async function capturarTelaCrossBrowser() {
+    if (navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia) {
+        return await navigator.mediaDevices.getDisplayMedia({ video: { cursor: "always" }, audio: false });
+    }
+    throw new Error('Navegador nao suporta compartilhamento de tela.');
+}
+
 async function criarConexaoVoz(outroUsuario, souIniciador, canalId) {
     const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
-    vozStreamLocal.getTracks().forEach(t => pc.addTrack(t, vozStreamLocal));
-    if (vozVideoStream) vozVideoStream.getTracks().forEach(t => pc.addTrack(t, vozVideoStream));
-    if (vozTelaStream) vozTelaStream.getTracks().forEach(t => pc.addTrack(t, vozTelaStream));
+    vozConexoes[outroUsuario] = pc;
+    vozFilaIce[outroUsuario] = [];
+
+    if (vozStreamLocal) {
+        vozStreamLocal.getTracks().forEach(t => pc.addTrack(t, vozStreamLocal));
+    }
+    if (vozVideoStream) {
+        vozVideoStream.getTracks().forEach(t => pc.addTrack(t, vozVideoStream));
+    }
+    if (vozTelaStream) {
+        vozTelaStream.getTracks().forEach(t => pc.addTrack(t, vozTelaStream));
+    }
+
     pc.ontrack = (ev) => {
         if (ev.track.kind === 'video') {
             let videoEl = document.getElementById('video-voz-' + outroUsuario);
             if (!videoEl) {
                 const card = document.querySelector('.card-voz-participante[data-usuario="' + outroUsuario + '"]');
                 videoEl = document.createElement('video');
-                videoEl.id = 'video-voz-' + outroUsuario; videoEl.autoplay = true; videoEl.playsInline = true;
+                videoEl.id = 'video-voz-' + outroUsuario;
+                videoEl.autoplay = true;
+                videoEl.playsInline = true;
                 if (card) card.insertBefore(videoEl, card.firstChild);
             }
             videoEl.srcObject = ev.streams[0];
+            videoEl.play().catch(() => {});
             return;
         }
         let audioEl = document.getElementById('audio-voz-' + outroUsuario);
-        if (!audioEl) { audioEl = document.createElement('audio'); audioEl.id = 'audio-voz-' + outroUsuario; audioEl.autoplay = true; audioEl.muted = vozSurdo; document.body.appendChild(audioEl); }
+        if (!audioEl) {
+            audioEl = document.createElement('audio');
+            audioEl.id = 'audio-voz-' + outroUsuario;
+            audioEl.autoplay = true;
+            audioEl.playsInline = true;
+            audioEl.muted = vozSurdo;
+            document.body.appendChild(audioEl);
+        }
         audioEl.srcObject = ev.streams[0];
+        audioEl.play().catch(() => {});
         monitorarVolumeVoz(ev.streams[0], outroUsuario);
     };
-    pc.onicecandidate = (ev) => { if (ev.candidate) enviarSinalVoz(canalId, outroUsuario, 'candidato', ev.candidate); };
-    vozConexoes[outroUsuario] = pc;
+
+    pc.onicecandidate = (ev) => {
+        if (ev.candidate) {
+            fetch('/api/voz/' + canalId + '/sinal', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ para: outroUsuario, tipo: 'ice', dado: ev.candidate })
+            }).catch(() => {});
+        }
+    };
+
     if (souIniciador) {
-        const oferta = await pc.createOffer();
-        await pc.setLocalDescription(oferta);
-        enviarSinalVoz(canalId, outroUsuario, 'oferta', oferta);
+        try {
+            const oferta = await pc.createOffer();
+            await pc.setLocalDescription(oferta);
+            await fetch('/api/voz/' + canalId + '/sinal', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ para: outroUsuario, tipo: 'oferta', dado: oferta })
+            });
+        } catch (e) {
+            console.error('Erro ao iniciar oferta WebRTC:', e);
+        }
     }
     return pc;
 }
-async function enviarSinalVoz(canalId, para, tipo, dados) {
-    await fetch('/api/voz/sinal', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ canal_id: canalId, para, tipo, dados }) });
-}
-async function pollarSinaisVoz() {
-    if (!vozCanalAtualId) return;
-    const r = await fetch('/api/voz/sinais?canal_id=' + vozCanalAtualId);
-    const sinais = await r.json();
-    for (const s of sinais) {
-        let pc = vozConexoes[s.de];
-        if (s.tipo === 'oferta') {
-            if (!pc) pc = await criarConexaoVoz(s.de, false, vozCanalAtualId);
-            await pc.setRemoteDescription(s.dados);
-            const resposta = await pc.createAnswer();
-            await pc.setLocalDescription(resposta);
-            enviarSinalVoz(vozCanalAtualId, s.de, 'resposta', resposta);
-        } else if (s.tipo === 'resposta') {
-            if (pc) await pc.setRemoteDescription(s.dados);
-        } else if (s.tipo === 'candidato') {
-            if (pc) { try { await pc.addIceCandidate(s.dados); } catch(e) {} }
+
+async function processarSinalVoz(sinal) {
+    const de = sinal.de;
+    let pc = vozConexoes[de];
+
+    if (sinal.tipo === 'oferta') {
+        if (!pc) pc = await criarConexaoVoz(de, false, vozCanalAtualId);
+        await pc.setRemoteDescription(new RTCSessionDescription(sinal.dado));
+        
+        // Esvaziar fila ICE
+        if (vozFilaIce[de]) {
+            for (const c of vozFilaIce[de]) {
+                try { await pc.addIceCandidate(new RTCIceCandidate(c)); } catch(e){}
+            }
+            vozFilaIce[de] = [];
+        }
+
+        const resposta = await pc.createAnswer();
+        await pc.setLocalDescription(resposta);
+        await fetch('/api/voz/' + vozCanalAtualId + '/sinal', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ para: de, tipo: 'resposta', dado: resposta })
+        });
+    } else if (sinal.tipo === 'resposta') {
+        if (pc && !pc.currentRemoteDescription) {
+            await pc.setRemoteDescription(new RTCSessionDescription(sinal.dado));
+            if (vozFilaIce[de]) {
+                for (const c of vozFilaIce[de]) {
+                    try { await pc.addIceCandidate(new RTCIceCandidate(c)); } catch(e){}
+                }
+                vozFilaIce[de] = [];
+            }
+        }
+    } else if (sinal.tipo === 'ice') {
+        if (pc && pc.remoteDescription && pc.remoteDescription.type) {
+            try { await pc.addIceCandidate(new RTCIceCandidate(sinal.dado)); } catch(e){}
+        } else {
+            if (!vozFilaIce[de]) vozFilaIce[de] = [];
+            vozFilaIce[de].push(sinal.dado);
         }
     }
 }
-function htmlBotoesVoz() {
-    return `<button class="${vozMutado?'ativado':''}" onclick="alternarMudoVoz()" id="botaoMudoVoz" title="Mutar/desmutar">${vozMutado?'&#128263;':'&#127908;'}</button>
-            <button class="${vozSurdo?'ativado':''}" onclick="alternarSurdoVoz()" id="botaoSurdoVoz" title="Ensurdecer">&#128266;</button>
-            <button class="${vozCompartilhandoTela?'ativado':''}" onclick="alternarCompartilharTelaVoz()" id="botaoTelaVoz" title="Compartilhar tela">&#128421;</button><button class="${vozComCamera?'ativado':''}" onclick="alternarCameraVoz()" id="botaoCameraVoz" title="Camera">&#128247;</button>
-            <button class="sair" onclick="sairCanalVoz()" title="Sair">&#9632;</button>`;
+
+async function alternarCameraVoz() {
+    if (!vozCanalAtualId) return;
+    if (vozComCamera) {
+        if (vozVideoStream) {
+            vozVideoStream.getTracks().forEach(t => t.stop());
+            vozVideoStream = null;
+        }
+        vozComCamera = false;
+        Object.values(vozConexoes).forEach(pc => {
+            pc.getSenders().forEach(s => {
+                if (s.track && s.track.kind === 'video') pc.removeTrack(s);
+            });
+        });
+    } else {
+        try {
+            vozVideoStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
+            vozComCamera = true;
+            const videoTrack = vozVideoStream.getVideoTracks()[0];
+            Object.values(vozConexoes).forEach(pc => {
+                const senders = pc.getSenders().filter(s => s.track && s.track.kind === 'video');
+                if (senders.length > 0) senders[0].replaceTrack(videoTrack);
+                else pc.addTrack(videoTrack, vozVideoStream);
+            });
+        } catch (e) {
+            appAlert('Nao foi possivel acessar a camera.');
+            vozComCamera = false;
+        }
+    }
+    renderizarControlesVoz();
 }
-async function entrarCanalVoz(canalId) {
-    try { vozStreamLocal = await navigator.mediaDevices.getUserMedia({ audio: true }); }
-    catch (e) { appAlert('Nao foi possivel acessar o microfone.'); return; }
-    vozCanalAtualId = canalId;
-    monitorarVolumeVoz(vozStreamLocal, MEU_USUARIO);
-    await fetch('/api/voz/entrar', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ canal_id: canalId }) });
-    const r = await fetch('/api/voz/participantes?canal_id=' + canalId);
-    const participantes = await r.json();
-    for (const p of participantes) { if (p.usuario !== MEU_USUARIO) await criarConexaoVoz(p.usuario, MEU_USUARIO < p.usuario, canalId); }
-    const bcv = document.getElementById('botoesControleVoz');
-    if (bcv) bcv.innerHTML = htmlBotoesVoz();
-    vozPollSinais = setInterval(pollarSinaisVoz, 1500);
-    atualizarParticipantesVoz();
+
+async function alternarTelaVoz() {
+    if (!vozCanalAtualId) return;
+    if (vozCompartilhandoTela) {
+        if (vozTelaStream) {
+            vozTelaStream.getTracks().forEach(t => t.stop());
+            vozTelaStream = null;
+        }
+        vozCompartilhandoTela = false;
+        Object.values(vozConexoes).forEach(pc => {
+            pc.getSenders().forEach(s => {
+                if (s.track && s.track.kind === 'video') pc.removeTrack(s);
+            });
+        });
+    } else {
+        try {
+            vozTelaStream = await capturarTelaCrossBrowser();
+            vozCompartilhandoTela = true;
+            const screenTrack = vozTelaStream.getVideoTracks()[0];
+            screenTrack.onended = () => { if (vozCompartilhandoTela) alternarTelaVoz(); };
+            Object.values(vozConexoes).forEach(pc => {
+                const senders = pc.getSenders().filter(s => s.track && s.track.kind === 'video');
+                if (senders.length > 0) senders[0].replaceTrack(screenTrack);
+                else pc.addTrack(screenTrack, vozTelaStream);
+            });
+        } catch (e) {
+            appAlert('Nao foi possivel compartilhar a tela.');
+            vozCompartilhandoTela = false;
+        }
+    }
+    renderizarControlesVoz();
 }
+
 function alternarMudoVoz() {
     if (!vozStreamLocal) return;
     vozMutado = !vozMutado;
     vozStreamLocal.getAudioTracks().forEach(t => t.enabled = !vozMutado);
-    const bcv = document.getElementById('botoesControleVoz'); if (bcv) bcv.innerHTML = htmlBotoesVoz();
-}
-function alternarSurdoVoz() {
-    vozSurdo = !vozSurdo;
-    document.querySelectorAll("audio[id^='audio-voz-']").forEach(a => a.muted = vozSurdo);
-    if (vozSurdo && !vozMutado) { vozMutado = true; if (vozStreamLocal) vozStreamLocal.getAudioTracks().forEach(t => t.enabled = false); }
-    const bcv = document.getElementById('botoesControleVoz'); if (bcv) bcv.innerHTML = htmlBotoesVoz();
-}
-async function renegociarComTodosVoz() {
-    for (const usuario in vozConexoes) {
-        const pc = vozConexoes[usuario];
-        const oferta = await pc.createOffer();
-        await pc.setLocalDescription(oferta);
-        enviarSinalVoz(vozCanalAtualId, usuario, 'oferta', oferta);
-    }
-}
-async function alternarCameraVoz(){
-    if(!vozStreamLocal)return toastSite('Entre no canal de voz primeiro.','erro');
-    if(vozVideoStream){ vozVideoStream.getTracks().forEach(t=>{for(const usuario in vozConexoes){const sender=vozConexoes[usuario].getSenders().find(x=>x.track===t);if(sender)vozConexoes[usuario].removeTrack(sender);}}); vozVideoStream.getTracks().forEach(t=>t.stop()); vozVideoStream=null; vozComCamera=false; const lv=document.getElementById('videoCameraLocalVoz'); if(lv){lv.srcObject=null;lv.style.display='none';} toastSite('Câmera desligada.','sucesso'); }
-    else { try{ vozVideoStream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user'}}); const tr=vozVideoStream.getVideoTracks()[0]; for(const usuario in vozConexoes){vozConexoes[usuario].addTrack(tr,vozVideoStream); const of=await vozConexoes[usuario].createOffer(); await vozConexoes[usuario].setLocalDescription(of); await enviarSinalVoz(vozCanalAtualId,usuario,'oferta',of);} vozComCamera=true; const lv=document.getElementById('videoCameraLocalVoz'); if(lv){lv.srcObject=vozVideoStream;lv.style.display='block';} toastSite('Câmera ligada.','sucesso'); }catch(e){toastSite('Não foi possível acessar a câmera.','erro');return;} }
-    const b=document.getElementById('botaoCameraVoz'); if(b){b.classList.toggle('ativado',vozComCamera);}
+    renderizarControlesVoz();
 }
 
-async function alternarCompartilharTelaVoz() {
-    if (vozCompartilhandoTela) { pararCompartilharTelaVoz(); return; }
-    try { vozTelaStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false }); }
-    catch (e) { return; }
-    const trackTela = vozTelaStream.getVideoTracks()[0];
-    for (const usuario in vozConexoes) { vozConexoes[usuario].addTrack(trackTela, vozTelaStream); }
-    vozCompartilhandoTela = true;
-    trackTela.onended = () => pararCompartilharTelaVoz();
-    await renegociarComTodosVoz();
-    const bcv = document.getElementById('botoesControleVoz'); if (bcv) bcv.innerHTML = htmlBotoesVoz();
+function alternarSurdoVoz() {
+    vozSurdo = !vozSurdo;
+    document.querySelectorAll('audio[id^="audio-voz-"]').forEach(a => a.muted = vozSurdo);
+    renderizarControlesVoz();
 }
-function pararCompartilharTelaVoz() {
-    if (vozTelaStream) { vozTelaStream.getTracks().forEach(t => {
-        for (const usuario in vozConexoes) {
-            const remetente = vozConexoes[usuario].getSenders().find(s => s.track === t);
-            if (remetente) vozConexoes[usuario].removeTrack(remetente);
+
+function renderizarControlesVoz() {
+    const el = document.getElementById('controlesVozPainel');
+    if (!el) return;
+    el.innerHTML = `
+        <button class="botao-chamada-circulo ${vozMutado ? 'alerta' : 'neutro'}" title="${vozMutado ? 'Desativar Mudo' : 'Mutar'}" onclick="alternarMudoVoz()">
+            ${vozMutado ? ICONS.micOff : ICONS.micOn}
+        </button>
+        <button class="botao-chamada-circulo ${vozSurdo ? 'alerta' : 'neutro'}" title="${vozSurdo ? 'Desativar Ensurdecer' : 'Ensurdecer'}" onclick="alternarSurdoVoz()">
+            ${vozSurdo ? ICONS.micOff : ICONS.micOn}
+        </button>
+        <button class="botao-chamada-circulo ${vozComCamera ? 'ativo' : 'neutro'}" title="${vozComCamera ? 'Desligar Camera' : 'Ligar Camera'}" onclick="alternarCameraVoz()">
+            ${vozComCamera ? ICONS.camOn : ICONS.camOff}
+        </button>
+        <button class="botao-chamada-circulo ${vozCompartilhandoTela ? 'ativo' : 'neutro'}" title="${vozCompartilhandoTela ? 'Parar Compartilhamento' : 'Compartilhar Tela'}" onclick="alternarTelaVoz()">
+            ${vozCompartilhandoTela ? ICONS.screenOn : ICONS.screenOff}
+        </button>
+        <button class="botao-chamada-circulo encerrar" title="Desconectar" onclick="desconectarVoz()">
+            ${ICONS.hangup}
+        </button>
+    `;
+}
+
+async function conectarCanalVoz(canalId, nome) {
+    if (vozCanalAtualId === canalId) return;
+    if (vozCanalAtualId) desconectarVoz();
+    vozCanalAtualId = canalId;
+    try {
+        vozStreamLocal = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+    } catch(e) {
+        appAlert('Nao foi possivel acessar o microfone.');
+        vozCanalAtualId = null;
+        return;
+    }
+    const r = await fetch('/api/voz/' + canalId + '/entrar', { method: 'POST' });
+    const d = await r.json();
+    if (!d.ok) {
+        appAlert(d.erro || 'Erro ao entrar na voz');
+        desconectarVoz();
+        return;
+    }
+
+    renderizarControlesVoz();
+
+    for (const participante of d.participantes) {
+        if (participante !== estado.usuario) {
+            await criarConexaoVoz(participante, true, canalId);
         }
-        t.stop();
-    }); vozTelaStream = null; }
-    vozCompartilhandoTela = false;
-    renegociarComTodosVoz();
-    const bcv = document.getElementById('botoesControleVoz'); if (bcv) bcv.innerHTML = htmlBotoesVoz();
+    }
+
+    vozPollSinais = setInterval(async () => {
+        if (!vozCanalAtualId) return;
+        const resp = await fetch('/api/voz/' + vozCanalAtualId + '/sinais');
+        const dados = await resp.json();
+        for (const s of dados.sinais) {
+            await processarSinalVoz(s);
+        }
+    }, 1500);
 }
-async function sairCanalVoz() {
+
+function desconectarVoz() {
     if (!vozCanalAtualId) return;
-    const canalEncerrado = vozCanalAtualId;
-    await fetch('/api/voz/sair', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ canal_id: canalEncerrado }) });
-    Object.values(vozConexoes).forEach(pc => pc.close());
-    Object.keys(vozAnalisadores).forEach(pararMonitorVolumeVoz);
-    pararMonitorVolumeVoz(MEU_USUARIO);
-    vozConexoes = {};
+    fetch('/api/voz/' + vozCanalAtualId + '/sair', { method: 'POST' }).catch(() => {});
+    if (vozPollSinais) { clearInterval(vozPollSinais); vozPollSinais = null; }
     if (vozStreamLocal) { vozStreamLocal.getTracks().forEach(t => t.stop()); vozStreamLocal = null; }
     if (vozVideoStream) { vozVideoStream.getTracks().forEach(t => t.stop()); vozVideoStream = null; }
     if (vozTelaStream) { vozTelaStream.getTracks().forEach(t => t.stop()); vozTelaStream = null; }
-    document.querySelectorAll("audio[id^='audio-voz-']").forEach(a => a.remove());
-    document.querySelectorAll("video[id^='video-voz-']").forEach(v => v.remove());
-    if (vozPollSinais) { clearInterval(vozPollSinais); vozPollSinais = null; }
-    vozCanalAtualId = null; vozMutado = false; vozSurdo = false; vozCompartilhandoTela = false; vozComCamera = false;
-    const bcv = document.getElementById('botoesControleVoz');
-    if (bcv) bcv.innerHTML = `<button class="entrar" onclick="entrarCanalVoz(${canalEncerrado})">&#128222;</button>`;
+    Object.values(vozConexoes).forEach(pc => pc.close());
+    vozConexoes = {};
+    vozFilaIce = {};
+    vozCanalAtualId = null;
+    vozMutado = false;
+    vozSurdo = false;
+    vozCompartilhandoTela = false;
+    vozComCamera = false;
+    const el = document.getElementById('controlesVozPainel');
+    if (el) el.innerHTML = '';
 }
-async function atualizarParticipantesVoz() {
-    if (!estado.canalAtual || estado.tipoCanalAtual !== 'voz') return;
-    const r = await fetch('/api/voz/participantes?canal_id=' + estado.canalAtual);
-    const participantes = await r.json();
-    if (vozCanalAtualId === estado.canalAtual) {
-        for (const p of participantes) { if (p.usuario !== MEU_USUARIO && !vozConexoes[p.usuario]) await criarConexaoVoz(p.usuario, MEU_USUARIO < p.usuario, estado.canalAtual); }
-        for (const usuario in vozConexoes) {
-            if (!participantes.find(p => p.usuario === usuario)) {
-                vozConexoes[usuario].close(); delete vozConexoes[usuario];
-                pararMonitorVolumeVoz(usuario);
-                const audioEl = document.getElementById('audio-voz-' + usuario); if (audioEl) audioEl.remove();
-                const videoEl = document.getElementById('video-voz-' + usuario); if (videoEl) videoEl.remove();
-            }
-        }
-    }
-    const grade = document.getElementById('gradeVozParticipantes');
-    if (grade) grade.innerHTML = participantes.map(p => `<div class="card-voz-participante" data-usuario="${escaparHtml(p.usuario)}"><img class="avatar-voz" src="${p.avatar}"><span>${escaparHtml(p.usuario)}</span></div>`).join('') || '<div class="vazio-lista-lateral">Ninguem no canal ainda.</div>';
-    atualizarClasseFalandoVoz();
-    const badge = document.getElementById('canalvoz-' + estado.canalAtual);
-    if (badge) { const b = badge.querySelector('.contagem-voz'); if (b) b.textContent = participantes.length ? participantes.length : ''; }
-}
-window.addEventListener('beforeunload', () => {
-    if (vozCanalAtualId) navigator.sendBeacon('/api/voz/sair', new Blob([JSON.stringify({ canal_id: vozCanalAtualId })], { type: 'application/json' }));
-    if (chamadaDmAtualId) navigator.sendBeacon('/api/chamada/encerrar', new Blob([JSON.stringify({ chamada_id: chamadaDmAtualId })], { type: 'application/json' }));
-});
 
 // ---------------------------------------------------------------
-// Chamadas de voz/video em DM (1 para 1)
+// Chamadas DM WebRTC (1x1) com Áudio, Vídeo e Compartilhamento de Tela
 // ---------------------------------------------------------------
-let dmPc = null, dmStreamLocal = null, chamadaDmAtualId = null, contatoChamadaDm = null, dmComVideo = false;
-let dmPollCandidatos = null, dmPollStatus = null, dmIndiceCandidatosRecebidos = 0, dmMutado = false, dmTelaStream = null;
+let dmPc = null;
+let dmFilaIce = [];
+let dmStreamLocal = null;
+let dmTelaStream = null;
+let chamadaDmAtualId = null;
+let contatoChamadaDm = null;
+let dmMutado = false;
+let dmComVideo = false;
+let dmCompartilhandoTela = false;
+let dmPollCandidatos = null;
+let dmPollStatus = null;
+let dmIndiceCandidatosRecebidos = 0;
 
-function abrirModalChamadaDM(nome, avatar, statusTexto, botoesHtml, comVideo) {
-    document.getElementById('nomeChamadaDM').textContent = nome;
-    document.getElementById('avatarChamadaDM').src = avatar || '';
-    document.getElementById('avatarChamadaDM').style.display = comVideo ? 'none' : '';
-    document.getElementById('statusChamadaDM').textContent = statusTexto;
-    document.getElementById('botoesChamadaDM').innerHTML = botoesHtml;
-    document.getElementById('modalChamadaDM').classList.add('aberto');
+function abrirModalChamadaDM(contato, avatar, statusTexto, botoesHtml, comVideo) {
+    document.getElementById('nomeChamadaDM').textContent = contato;
+    document.getElementById('statusChamadaDM').textContent = statusTexto || '';
+    document.getElementById('botoesChamadaDM').innerHTML = botoesHtml || '';
+    const modal = document.getElementById('modalChamadaDM');
+    modal.classList.add('aberto');
 }
+
 function fecharModalChamadaDM() {
-    document.getElementById('modalChamadaDM').classList.remove('aberto');
-    document.getElementById('avatarChamadaDM').style.display = '';
-    document.getElementById('videoRemotoDM').classList.remove('ativo'); document.getElementById('videoRemotoDM').srcObject = null;
-    document.getElementById('videoLocalDM').classList.remove('ativo'); document.getElementById('videoLocalDM').srcObject = null;
+    const modal = document.getElementById('modalChamadaDM');
+    if (modal) modal.classList.remove('aberto');
+    const av = document.getElementById('avatarChamadaDM');
+    if (av) av.style.display = '';
+    const vr = document.getElementById('videoRemotoDM');
+    if (vr) { vr.classList.remove('ativo'); vr.srcObject = null; }
+    const vl = document.getElementById('videoLocalDM');
+    if (vl) { vl.classList.remove('ativo'); vl.srcObject = null; }
 }
+
 async function criarConexaoDM(comVideo) {
     dmPc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
-    dmStreamLocal = await navigator.mediaDevices.getUserMedia({ audio: true, video: comVideo ? { facingMode: 'user' } : false });
+    dmFilaIce = [];
+    
+    dmStreamLocal = await navigator.mediaDevices.getUserMedia({
+        audio: true,
+        video: comVideo ? { facingMode: 'user' } : false
+    });
+    
     dmStreamLocal.getTracks().forEach(t => dmPc.addTrack(t, dmStreamLocal));
-    if (comVideo) { const vl = document.getElementById('videoLocalDM'); vl.srcObject = dmStreamLocal; vl.classList.add('ativo'); }
+
+    if (comVideo) {
+        const vl = document.getElementById('videoLocalDM');
+        if (vl) {
+            vl.srcObject = dmStreamLocal;
+            vl.classList.add('ativo');
+            vl.play().catch(() => {});
+        }
+    }
+
     dmPc.ontrack = (ev) => {
-        document.getElementById('audioRemotoDM').srcObject = ev.streams[0];
-        if (ev.track.kind === 'video') { const vr = document.getElementById('videoRemotoDM'); vr.srcObject = ev.streams[0]; vr.classList.add('ativo'); }
+        if (ev.track.kind === 'video') {
+            const vr = document.getElementById('videoRemotoDM');
+            if (vr) {
+                vr.srcObject = ev.streams[0];
+                vr.classList.add('ativo');
+                vr.play().catch(() => {});
+            }
+            const av = document.getElementById('avatarChamadaDM');
+            if (av) av.style.display = 'none';
+        } else {
+            const ar = document.getElementById('audioRemotoDM');
+            if (ar) {
+                ar.srcObject = ev.streams[0];
+                ar.play().catch(() => {});
+            }
+        }
     };
-    dmPc.onicecandidate = (ev) => { if (ev.candidate && chamadaDmAtualId) fetch('/api/chamada/candidato', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ chamada_id: chamadaDmAtualId, candidato: ev.candidate }) }); };
+
+    dmPc.onicecandidate = (ev) => {
+        if (ev.candidate && chamadaDmAtualId) {
+            fetch('/api/chamada/candidato', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ chamada_id: chamadaDmAtualId, candidato: ev.candidate })
+            }).catch(() => {});
+        }
+    };
+
     dmPc.onconnectionstatechange = () => {
         if (!dmPc) return;
-        if (dmPc.connectionState === 'connected') document.getElementById('statusChamadaDM').textContent = 'Em chamada';
-        else if (dmPc.connectionState === 'failed' || dmPc.connectionState === 'disconnected' || dmPc.connectionState === 'closed') encerrarChamadaDM(false);
+        if (dmPc.connectionState === 'connected') {
+            document.getElementById('statusChamadaDM').textContent = 'Em chamada';
+        } else if (['failed', 'disconnected', 'closed'].includes(dmPc.connectionState)) {
+            encerrarChamadaDM(false);
+        }
     };
 }
+
 function botoesEmChamadaDmHtml() {
-    let html = `<button class="botao-chamada-circulo neutro" id="botaoMudoDM" onclick="alternarMudoDM()">${dmMutado?'&#128263;':'&#127908;'}</button>`;
- html += `<button class="botao-chamada-circulo encerrar" onclick="encerrarChamadaDM(true)">&#128222;</button>`;
-    return html;
+    return `
+        <button class="botao-chamada-circulo ${dmMutado ? 'alerta' : 'neutro'}" id="botaoMudoDM" title="${dmMutado ? 'Desativar Mudo' : 'Mutar'}" onclick="alternarMudoDM()">
+            ${dmMutado ? ICONS.micOff : ICONS.micOn}
+        </button>
+        <button class="botao-chamada-circulo ${dmComVideo ? 'ativo' : 'neutro'}" id="botaoVideoDM" title="${dmComVideo ? 'Desligar Câmera' : 'Ligar Câmera'}" onclick="alternarCameraDM()">
+            ${dmComVideo ? ICONS.camOn : ICONS.camOff}
+        </button>
+        <button class="botao-chamada-circulo ${dmCompartilhandoTela ? 'ativo' : 'neutro'}" id="botaoTelaDM" title="${dmCompartilhandoTela ? 'Parar Compartilhamento' : 'Compartilhar Tela'}" onclick="alternarCompartilhamentoTelaDM()">
+            ${dmCompartilhandoTela ? ICONS.screenOn : ICONS.screenOff}
+        </button>
+        <button class="botao-chamada-circulo encerrar" title="Desconectar" onclick="encerrarChamadaDM(true)">
+            ${ICONS.hangup}
+        </button>
+    `;
 }
+
 function alternarMudoDM() {
     if (!dmStreamLocal) return;
     dmMutado = !dmMutado;
     dmStreamLocal.getAudioTracks().forEach(t => t.enabled = !dmMutado);
     document.getElementById('botoesChamadaDM').innerHTML = botoesEmChamadaDmHtml();
 }
+
+async function alternarCameraDM() {
+    if (!dmPc) return;
+    if (dmComVideo) {
+        const videoTrack = dmStreamLocal.getVideoTracks()[0];
+        if (videoTrack) {
+            videoTrack.stop();
+            dmStreamLocal.removeTrack(videoTrack);
+        }
+        const sender = dmPc.getSenders().find(s => s.track && s.track.kind === 'video');
+        if (sender) dmPc.removeTrack(sender);
+        dmComVideo = false;
+        const vl = document.getElementById('videoLocalDM');
+        if (vl) { vl.classList.remove('ativo'); vl.srcObject = null; }
+    } else {
+        try {
+            const camStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
+            const newTrack = camStream.getVideoTracks()[0];
+            dmStreamLocal.addTrack(newTrack);
+            const sender = dmPc.getSenders().find(s => s.track && s.track.kind === 'video');
+            if (sender) {
+                sender.replaceTrack(newTrack);
+            } else {
+                dmPc.addTrack(newTrack, dmStreamLocal);
+            }
+            dmComVideo = true;
+            const vl = document.getElementById('videoLocalDM');
+            if (vl) {
+                vl.srcObject = dmStreamLocal;
+                vl.classList.add('ativo');
+                vl.play().catch(() => {});
+            }
+        } catch (e) {
+            appAlert('Não foi possível ativar a câmera.');
+        }
+    }
+    document.getElementById('botoesChamadaDM').innerHTML = botoesEmChamadaDmHtml();
+}
+
+async function alternarCompartilhamentoTelaDM() {
+    if (!dmPc) return;
+    if (dmCompartilhandoTela) {
+        if (dmTelaStream) {
+            dmTelaStream.getTracks().forEach(t => t.stop());
+            dmTelaStream = null;
+        }
+        dmCompartilhandoTela = false;
+        
+        // Se tinha câmera antes, volta a câmera, senão remove o vídeo
+        if (dmComVideo) {
+            const camTrack = dmStreamLocal.getVideoTracks()[0];
+            const sender = dmPc.getSenders().find(s => s.track && s.track.kind === 'video');
+            if (sender && camTrack) sender.replaceTrack(camTrack);
+            const vl = document.getElementById('videoLocalDM');
+            if (vl) vl.srcObject = dmStreamLocal;
+        } else {
+            const sender = dmPc.getSenders().find(s => s.track && s.track.kind === 'video');
+            if (sender) dmPc.removeTrack(sender);
+            const vl = document.getElementById('videoLocalDM');
+            if (vl) { vl.classList.remove('ativo'); vl.srcObject = null; }
+        }
+    } else {
+        try {
+            dmTelaStream = await capturarTelaCrossBrowser();
+            dmCompartilhandoTela = true;
+            const telaTrack = dmTelaStream.getVideoTracks()[0];
+            
+            telaTrack.onended = () => {
+                if (dmCompartilhandoTela) alternarCompartilhamentoTelaDM();
+            };
+
+            const sender = dmPc.getSenders().find(s => s.track && s.track.kind === 'video');
+            if (sender) {
+                sender.replaceTrack(telaTrack);
+            } else {
+                dmPc.addTrack(telaTrack, dmTelaStream);
+            }
+
+            const vl = document.getElementById('videoLocalDM');
+            if (vl) {
+                vl.srcObject = dmTelaStream;
+                vl.classList.add('ativo');
+                vl.play().catch(() => {});
+            }
+        } catch (e) {
+            appAlert('Não foi possível compartilhar a tela.');
+            dmCompartilhandoTela = false;
+        }
+    }
+    document.getElementById('botoesChamadaDM').innerHTML = botoesEmChamadaDmHtml();
+}
+
 async function iniciarChamadaDM(comVideo) {
     if (!estado.dmAtual) return;
-    contatoChamadaDm = estado.dmAtual; dmComVideo = !!comVideo;
-    abrirModalChamadaDM(contatoChamadaDm, null, 'Chamando...', '<button class="botao-chamada-circulo encerrar" onclick="encerrarChamadaDM(true)">&#128222;</button>', dmComVideo);
-    try { await criarConexaoDM(dmComVideo); } catch (e) { appAlert('Nao foi possivel acessar o microfone/camera.'); fecharModalChamadaDM(); return; }
+    contatoChamadaDm = estado.dmAtual;
+    dmComVideo = !!comVideo;
+    abrirModalChamadaDM(contatoChamadaDm, null, 'Chamando...', `<button class="botao-chamada-circulo encerrar" onclick="encerrarChamadaDM(true)">${ICONS.hangup}</button>`, dmComVideo);
+    
+    try {
+        await criarConexaoDM(dmComVideo);
+    } catch (e) {
+        appAlert('Nao foi possivel acessar microfone/camera.');
+        fecharModalChamadaDM();
+        return;
+    }
+    
     const oferta = await dmPc.createOffer();
     await dmPc.setLocalDescription(oferta);
-    const r = await fetch('/api/chamada/iniciar', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ contato: contatoChamadaDm, oferta, com_video: dmComVideo }) });
+    const r = await fetch('/api/chamada/iniciar', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contato: contatoChamadaDm, oferta, com_video: dmComVideo })
+    });
     const d = await r.json();
-    if (!d.ok) { appAlert(d.erro || 'Nao foi possivel ligar.'); fecharModalChamadaDM(); return; }
+    if (!d.ok) {
+        appAlert(d.erro || 'Nao foi possivel ligar.');
+        fecharModalChamadaDM();
+        return;
+    }
     chamadaDmAtualId = d.chamada_id;
     iniciarPollCandidatosDM();
+    
     dmPollStatus = setInterval(async () => {
+        if (!chamadaDmAtualId || !dmPc) return;
         const rs = await fetch('/api/chamada/status/' + chamadaDmAtualId);
         const ds = await rs.json();
         if (ds.status === 'aceita' && ds.resposta && dmPc && !dmPc.currentRemoteDescription) {
-            await dmPc.setRemoteDescription(ds.resposta);
+            await dmPc.setRemoteDescription(new RTCSessionDescription(ds.resposta));
+            // Esvaziar candidatos enfileirados
+            if (dmFilaIce && dmFilaIce.length) {
+                for (const c of dmFilaIce) {
+                    try { await dmPc.addIceCandidate(new RTCIceCandidate(c)); } catch(e){}
+                }
+                dmFilaIce = [];
+            }
             document.getElementById('statusChamadaDM').textContent = 'Em chamada';
             document.getElementById('botoesChamadaDM').innerHTML = botoesEmChamadaDmHtml();
-        } else if (ds.status === 'recusada') { document.getElementById('statusChamadaDM').textContent = 'Chamada recusada'; setTimeout(() => encerrarChamadaDM(false), 1200); }
-        else if (ds.status === 'encerrada') { encerrarChamadaDM(false); }
+        } else if (ds.status === 'recusada') {
+            document.getElementById('statusChamadaDM').textContent = 'Chamada recusada';
+            setTimeout(() => encerrarChamadaDM(false), 1200);
+        } else if (ds.status === 'encerrada') {
+            encerrarChamadaDM(false);
+        }
     }, 1500);
 }
+
 async function verificarChamadaDmEntrando() {
     if (chamadaDmAtualId) return;
     const r = await fetch('/api/chamada/pendente');
     const d = await r.json();
     if (!d.chamada) return;
-    chamadaDmAtualId = d.chamada.id; contatoChamadaDm = d.chamada.de;
-    window._ofertaRecebidaDM = d.chamada.oferta; dmComVideo = !!d.chamada.com_video;
-    abrirModalChamadaDM(contatoChamadaDm, null, dmComVideo ? 'Chamada de video recebida...' : 'Chamada recebida...',
-        '<button class="botao-chamada-circulo aceitar" onclick="aceitarChamadaDM()">&#9742;</button><button class="botao-chamada-circulo recusar" onclick="recusarChamadaDM()">&#10006;</button>', dmComVideo);
+    chamadaDmAtualId = d.chamada.id;
+    contatoChamadaDm = d.chamada.de;
+    window._ofertaRecebidaDM = d.chamada.oferta;
+    dmComVideo = !!d.chamada.com_video;
+    
+    abrirModalChamadaDM(
+        contatoChamadaDm,
+        null,
+        dmComVideo ? 'Chamada de video recebida...' : 'Chamada de audio recebida...',
+        `<button class="botao-chamada-circulo aceitar" title="Atender" onclick="aceitarChamadaDM()">${ICONS.callAccept}</button>
+         <button class="botao-chamada-circulo recusar" title="Recusar" onclick="recusarChamadaDM()">${ICONS.callReject}</button>`,
+        dmComVideo
+    );
 }
+
 async function aceitarChamadaDM() {
-    try { await criarConexaoDM(dmComVideo); } catch (e) { recusarChamadaDM(); return; }
-    await dmPc.setRemoteDescription(window._ofertaRecebidaDM);
+    try {
+        await criarConexaoDM(dmComVideo);
+    } catch (e) {
+        recusarChamadaDM();
+        return;
+    }
+    await dmPc.setRemoteDescription(new RTCSessionDescription(window._ofertaRecebidaDM));
+    
+    // Esvaziar candidatos recebidos antes
+    if (dmFilaIce && dmFilaIce.length) {
+        for (const c of dmFilaIce) {
+            try { await dmPc.addIceCandidate(new RTCIceCandidate(c)); } catch(e){}
+        }
+        dmFilaIce = [];
+    }
+
     const resposta = await dmPc.createAnswer();
     await dmPc.setLocalDescription(resposta);
-    await fetch('/api/chamada/responder', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ chamada_id: chamadaDmAtualId, resposta, aceitar: true }) });
+    await fetch('/api/chamada/responder', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chamada_id: chamadaDmAtualId, resposta, aceitar: true })
+    });
+    
     document.getElementById('statusChamadaDM').textContent = 'Em chamada';
     document.getElementById('botoesChamadaDM').innerHTML = botoesEmChamadaDmHtml();
     iniciarPollCandidatosDM();
 }
+
 async function recusarChamadaDM() {
-    await fetch('/api/chamada/responder', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ chamada_id: chamadaDmAtualId, aceitar: false }) });
+    await fetch('/api/chamada/responder', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chamada_id: chamadaDmAtualId, aceitar: false })
+    });
     encerrarChamadaDM(false);
 }
+
 function iniciarPollCandidatosDM() {
     dmIndiceCandidatosRecebidos = 0;
-    let filaPendentes = [];
-    async function tentarAdicionar(c) {
-        if (dmPc && dmPc.remoteDescription && dmPc.remoteDescription.type) { try { await dmPc.addIceCandidate(c); } catch(e) {} }
-        else filaPendentes.push(c);
-    }
     dmPollCandidatos = setInterval(async () => {
         if (!chamadaDmAtualId || !dmPc) return;
-        if (dmPc.remoteDescription && dmPc.remoteDescription.type && filaPendentes.length) {
-            const pendentes = filaPendentes; filaPendentes = [];
-            for (const c of pendentes) { try { await dmPc.addIceCandidate(c); } catch(e) {} }
-        }
         const r = await fetch('/api/chamada/candidatos/' + chamadaDmAtualId + '?desde=' + dmIndiceCandidatosRecebidos);
         const d = await r.json();
-        for (const c of d.candidatos) { await tentarAdicionar(c); }
+        for (const c of d.candidatos) {
+            if (dmPc.remoteDescription && dmPc.remoteDescription.type) {
+                try { await dmPc.addIceCandidate(new RTCIceCandidate(c)); } catch(e){}
+            } else {
+                dmFilaIce.push(c);
+            }
+        }
         dmIndiceCandidatosRecebidos += d.candidatos.length;
-        if (d.status === 'encerrada' || d.status === 'recusada') encerrarChamadaDM(false);
+        if (d.status === 'encerrada' || d.status === 'recusada') {
+            encerrarChamadaDM(false);
+        }
     }, 1500);
 }
+
 async function encerrarChamadaDM(avisarServidor) {
-    if (avisarServidor && chamadaDmAtualId) fetch('/api/chamada/encerrar', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ chamada_id: chamadaDmAtualId }) });
+    if (avisarServidor && chamadaDmAtualId) {
+        fetch('/api/chamada/encerrar', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ chamada_id: chamadaDmAtualId })
+        }).catch(() => {});
+    }
     if (dmPc) { dmPc.close(); dmPc = null; }
     if (dmStreamLocal) { dmStreamLocal.getTracks().forEach(t => t.stop()); dmStreamLocal = null; }
     if (dmTelaStream) { dmTelaStream.getTracks().forEach(t => t.stop()); dmTelaStream = null; }
     if (dmPollCandidatos) { clearInterval(dmPollCandidatos); dmPollCandidatos = null; }
     if (dmPollStatus) { clearInterval(dmPollStatus); dmPollStatus = null; }
-    chamadaDmAtualId = null; contatoChamadaDm = null; dmMutado = false;
+    chamadaDmAtualId = null;
+    contatoChamadaDm = null;
+    dmMutado = false;
+    dmComVideo = false;
+    dmCompartilhandoTela = false;
     fecharModalChamadaDM();
 }
-setInterval(verificarChamadaDmEntrando, 2500);
 
-// ---------------------------------------------------------------
 // Presenca (heartbeat) e nao lidos globais + inicializacao
 // ---------------------------------------------------------------
 async function pulsarPresenca() { try { await fetch('/api/heartbeat', { method: 'POST' }); } catch(e) {} }
