@@ -763,32 +763,8 @@ button, input, textarea, select { font-family: inherit; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: #1a1b1e; border-radius: 4px; }
 a { color: inherit; text-decoration: none; }
-"""
 
-FONTE_LINK = (
-    '<link rel="preconnect" href="https://fonts.googleapis.com">'
-    '<link href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;600;700&display=swap" rel="stylesheet">'
-)
-
-
-def pagina_html(titulo, corpo, estilos_extra="", scripts_extra=""):
-    return f"""<!DOCTYPE html>
-<html lang="pt-BR">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>{titulo}</title>
-{FONTE_LINK}
-<link rel="manifest" href="/manifest.json">
-<link rel="icon" type="image/svg+xml" href="/static/logo.png">
-<link rel="apple-touch-icon" href="/static/logo.png">
-<meta name="theme-color" content="#1e1f22">
-<style>{ESTILO_BASE}
-body {{ font-family: 'Rubik', 'Segoe UI', sans-serif; }}
-{estilos_extra}
-</style>
-
-<style id="discord-webrtc-style">
+/* Controles modernos de chamada WebRTC estilo Discord */
 .botao-chamada-circulo {
     width: 44px; height: 44px; border-radius: 50%; border: none; cursor: pointer;
     display: inline-flex; align-items: center; justify-content: center;
@@ -815,8 +791,31 @@ body {{ font-family: 'Rubik', 'Segoe UI', sans-serif; }}
 .card-voz-participante video { width: 100%; height: 100%; object-fit: cover; background: #111214; border-radius: 8px; }
 .modal-chamada-video-container { display: flex; flex-direction: column; align-items: center; justify-content: center; width: 100%; height: 100%; min-height: 240px; position: relative; }
 .modal-chamada-video-container video.ativo { display: block !important; border-radius: 8px; max-height: 480px; width: 100%; background: #000; }
-</style>
 
+"""
+
+FONTE_LINK = (
+    '<link rel="preconnect" href="https://fonts.googleapis.com">'
+    '<link href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;600;700&display=swap" rel="stylesheet">'
+)
+
+
+def pagina_html(titulo, corpo, estilos_extra="", scripts_extra=""):
+    return f"""<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>{titulo}</title>
+{FONTE_LINK}
+<link rel="manifest" href="/manifest.json">
+<link rel="icon" type="image/svg+xml" href="/static/logo.png">
+<link rel="apple-touch-icon" href="/static/logo.png">
+<meta name="theme-color" content="#1e1f22">
+<style>{ESTILO_BASE}
+body {{ font-family: 'Rubik', 'Segoe UI', sans-serif; }}
+{estilos_extra}
+</style>
 </head>
 <body>
 {corpo}
@@ -3031,7 +3030,6 @@ async function processarSinalVoz(sinal) {
         if (!pc) pc = await criarConexaoVoz(de, false, vozCanalAtualId);
         await pc.setRemoteDescription(new RTCSessionDescription(sinal.dado));
         
-        // Esvaziar fila ICE
         if (vozFilaIce[de]) {
             for (const c of vozFilaIce[de]) {
                 try { await pc.addIceCandidate(new RTCIceCandidate(c)); } catch(e){}
@@ -3385,7 +3383,6 @@ async function alternarCompartilhamentoTelaDM() {
         }
         dmCompartilhandoTela = false;
         
-        // Se tinha câmera antes, volta a câmera, senão remove o vídeo
         if (dmComVideo) {
             const camTrack = dmStreamLocal.getVideoTracks()[0];
             const sender = dmPc.getSenders().find(s => s.track && s.track.kind === 'video');
@@ -3465,7 +3462,6 @@ async function iniciarChamadaDM(comVideo) {
         const ds = await rs.json();
         if (ds.status === 'aceita' && ds.resposta && dmPc && !dmPc.currentRemoteDescription) {
             await dmPc.setRemoteDescription(new RTCSessionDescription(ds.resposta));
-            // Esvaziar candidatos enfileirados
             if (dmFilaIce && dmFilaIce.length) {
                 for (const c of dmFilaIce) {
                     try { await dmPc.addIceCandidate(new RTCIceCandidate(c)); } catch(e){}
@@ -3512,7 +3508,6 @@ async function aceitarChamadaDM() {
     }
     await dmPc.setRemoteDescription(new RTCSessionDescription(window._ofertaRecebidaDM));
     
-    // Esvaziar candidatos recebidos antes
     if (dmFilaIce && dmFilaIce.length) {
         for (const c of dmFilaIce) {
             try { await dmPc.addIceCandidate(new RTCIceCandidate(c)); } catch(e){}
